@@ -43,7 +43,7 @@ public class LoginActivity extends Activity {
 							body.put("password", password);
 							
 							// Backend login endpoint
-							String url = "https://spymb.onrender.com/api/auth/login";
+							String url = com.company.devicemgr.utils.ApiConfig.api("/api/auth/login");
 							String res = HttpClient.postJson(url, body.toString(), null);
 							
 							final JSONObject jo = new JSONObject(res);

