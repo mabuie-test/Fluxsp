@@ -1,0 +1,9 @@
+RewriteEngine On
+
+# Serve existing files/directories directly
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Route API calls to PHP entrypoint
+RewriteRule ^api/.*$ /api/index.php [QSA,L]
