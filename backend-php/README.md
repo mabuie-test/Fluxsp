@@ -26,7 +26,7 @@ Variáveis de ambiente:
 - `MYSQL_PASSWORD` (default vazio)
 - `JWT_SECRET`
 - `ADMIN_REGISTRATION_SECRET`
-- `MEDIA_DIR` (opcional, default `backend-php/media`)
+- `MEDIA_DIR` (opcional, default `media`)
 
 ## Inicializar BD
 ```bash
