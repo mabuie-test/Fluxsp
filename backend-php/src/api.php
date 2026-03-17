@@ -13,6 +13,14 @@ $cfg = [
   'jwt_secret' => getenv('JWT_SECRET') ?: 'change_this_secret',
   'admin_registration_secret' => getenv('ADMIN_REGISTRATION_SECRET') ?: '',
   'media_dir' => getenv('MEDIA_DIR') ?: __DIR__ . '/../media',
+  'app_base_url' => getenv('APP_BASE_URL') ?: '',
+  'mail_from' => getenv('MAIL_FROM') ?: 'no-reply@localhost',
+  'mail_from_name' => getenv('MAIL_FROM_NAME') ?: 'DeviceMgr',
+  'smtp_host' => getenv('SMTP_HOST') ?: '',
+  'smtp_port' => getenv('SMTP_PORT') ?: '587',
+  'smtp_username' => getenv('SMTP_USERNAME') ?: '',
+  'smtp_password' => getenv('SMTP_PASSWORD') ?: '',
+  'smtp_secure' => getenv('SMTP_SECURE') ?: 'tls',
 ];
 if (!is_dir($cfg['media_dir'])) { @mkdir($cfg['media_dir'], 0777, true); }
 
@@ -22,6 +30,19 @@ $pdo = new PDO(
   $cfg['db_pass'],
   [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
 );
+
+
+$pdo->exec('CREATE TABLE IF NOT EXISTS password_resets (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME DEFAULT NULL,
+  created_at DATETIME NOT NULL,
+  INDEX idx_password_resets_user (user_id),
+  UNIQUE KEY uq_password_reset_token_hash (token_hash),
+  CONSTRAINT fk_password_resets_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)');
 
 function b64url_encode(string $d): string { return rtrim(strtr(base64_encode($d), '+/', '-_'), '='); }
 function b64url_decode(string $d): string { return base64_decode(strtr($d, '-_', '+/') . str_repeat('=', (4 - strlen($d) % 4) % 4)); }
@@ -149,6 +170,55 @@ if (!str_starts_with($path, '/api/')) send_json(['error' => 'not_found'], 404);
 $route = substr($path, 4);
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+if (is_file($autoload)) {
+  require_once $autoload;
+}
+
+function send_reset_email(array $cfg, string $to, string $token): bool {
+  $base = rtrim($cfg['app_base_url'] ?: (((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost')), '/');
+  $resetUrl = $base . '/reset-password.html?token=' . urlencode($token);
+
+  $subject = 'Recuperação de senha - DeviceMgr';
+  $html = '<p>Recebemos um pedido para redefinir a sua senha.</p>'
+    . '<p><a href="' . htmlspecialchars($resetUrl, ENT_QUOTES) . '">Clique aqui para redefinir a senha</a></p>'
+    . '<p>Se não foi você, ignore este email.</p>';
+
+  if (class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+    try {
+      $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+      if (!empty($cfg['smtp_host'])) {
+        $mail->isSMTP();
+        $mail->Host = $cfg['smtp_host'];
+        $mail->Port = (int)$cfg['smtp_port'];
+        $mail->SMTPAuth = !empty($cfg['smtp_username']);
+        $mail->Username = $cfg['smtp_username'];
+        $mail->Password = $cfg['smtp_password'];
+        if (!empty($cfg['smtp_secure'])) $mail->SMTPSecure = $cfg['smtp_secure'];
+      }
+      $mail->setFrom($cfg['mail_from'], $cfg['mail_from_name']);
+      $mail->addAddress($to);
+      $mail->isHTML(true);
+      $mail->Subject = $subject;
+      $mail->Body = $html;
+      $mail->AltBody = 'Recuperação de senha: ' . $resetUrl;
+      return $mail->send();
+    } catch (Throwable $e) {
+      error_log('mail error: ' . $e->getMessage());
+      return false;
+    }
+  }
+
+  $headers = "MIME-Version: 1.0
+"
+    . "Content-type:text/html;charset=UTF-8
+"
+    . 'From: ' . $cfg['mail_from'] . "
+";
+  return @mail($to, $subject, $html, $headers);
+}
+
 try {
   // auth
   if ($route === '/auth/register' && $method === 'POST') {
@@ -168,6 +238,44 @@ try {
     if (!$u || !password_verify($b['password'], $u['password_hash'])) send_json(['error' => 'invalid_credentials'], 401);
     $payload = ['id' => (string)$u['id'], 'role' => $u['role'], 'email' => $u['email'], 'exp' => time() + 60 * 60 * 24 * 30];
     send_json(['token' => jwt_sign($payload, $cfg['jwt_secret']), 'userId' => (string)$u['id'], 'role' => $u['role'], 'active' => (bool)$u['active']]);
+  }
+
+
+  if ($route === '/auth/forgot-password' && $method === 'POST') {
+    $b = json_body();
+    $email = strtolower(trim((string)($b['email'] ?? '')));
+    if (!$email) send_json(['ok' => true]);
+
+    $q = $pdo->prepare('SELECT id,email FROM users WHERE email=? LIMIT 1');
+    $q->execute([$email]);
+    $u = $q->fetch();
+    if ($u) {
+      $token = bin2hex(random_bytes(32));
+      $tokenHash = hash('sha256', $token);
+      $pdo->prepare('UPDATE password_resets SET used_at=NOW() WHERE user_id=? AND used_at IS NULL')->execute([$u['id']]);
+      $ins = $pdo->prepare('INSERT INTO password_resets(user_id,token_hash,expires_at,used_at,created_at) VALUES(?,?,DATE_ADD(NOW(), INTERVAL 1 HOUR),NULL,NOW())');
+      $ins->execute([$u['id'], $tokenHash]);
+      send_reset_email($cfg, $u['email'], $token);
+    }
+    send_json(['ok' => true]);
+  }
+
+  if ($route === '/auth/reset-password' && $method === 'POST') {
+    $b = json_body();
+    $token = (string)($b['token'] ?? '');
+    $newPassword = (string)($b['password'] ?? '');
+    if (!$token || strlen($newPassword) < 6) send_json(['ok' => false, 'error' => 'invalid_request'], 400);
+
+    $tokenHash = hash('sha256', $token);
+    $q = $pdo->prepare('SELECT * FROM password_resets WHERE token_hash=? AND used_at IS NULL AND expires_at > NOW() LIMIT 1');
+    $q->execute([$tokenHash]);
+    $row = $q->fetch();
+    if (!$row) send_json(['ok' => false, 'error' => 'invalid_or_expired_token'], 400);
+
+    $u = $pdo->prepare('UPDATE users SET password_hash=? WHERE id=?');
+    $u->execute([password_hash($newPassword, PASSWORD_BCRYPT), $row['user_id']]);
+    $pdo->prepare('UPDATE password_resets SET used_at=NOW() WHERE id=?')->execute([$row['id']]);
+    send_json(['ok' => true]);
   }
 
   if ($route === '/auth/me' && $method === 'GET') {

