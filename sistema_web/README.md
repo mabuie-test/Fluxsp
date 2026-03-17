@@ -6,6 +6,12 @@ Estrutura unificada:
 - `storage/media/`: ficheiros de media enviados pelo app.
 
 ## Configuração
+Use o ficheiro `.env.example` como base:
+
+```bash
+cp .env.example .env
+```
+
 Defina variáveis de ambiente:
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
 - `JWT_SECRET`
