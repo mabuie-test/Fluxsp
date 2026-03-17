@@ -26,7 +26,23 @@ Variáveis de ambiente:
 - `MYSQL_PASSWORD` (default vazio)
 - `JWT_SECRET`
 - `ADMIN_REGISTRATION_SECRET`
-- `MEDIA_DIR` (opcional, default `backend-php/media`)
+- `MEDIA_DIR` (opcional, default `media`)
+- `APP_BASE_URL` (opcional, ex: `https://teu-dominio.com`)
+- `MAIL_FROM` (email remetente)
+- `MAIL_FROM_NAME` (nome remetente)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_SECURE`
+
+### Recuperação de senha (PHPMailer)
+A API expõe:
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
+
+Para envio por SMTP com PHPMailer:
+```bash
+cd backend-php
+composer require phpmailer/phpmailer
+```
+Se PHPMailer não estiver instalado, o sistema tenta fallback para `mail()`.
 
 ## Inicializar BD
 ```bash

@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>DeviceMgr - Registar</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body class="matrix">
+  <div class="auth-wrap">
+    <div class="card">
+      <div class="auth-title">
+        <span class="brand">DEVICE.MGR</span>
+        <span class="pill">REGISTER</span>
+      </div>
+      <h2>Criar conta</h2>
+      <p class="small">Registo rápido para acesso ao sistema.</p>
+
+      <label>Email</label>
+      <input id="email" type="email" placeholder="teu@email.com" />
+      <label>Nome</label>
+      <input id="name" type="text" placeholder="Nome completo" />
+      <label>Palavra-passe</label>
+      <input id="password" type="password" placeholder="********" />
+      <div class="row" style="margin-top:12px">
+        <button id="btnRegister">Criar conta</button>
+        <a class="btn secondary" href="/login.html">Ir para login</a>
+      </div>
+      <p id="regMsg" class="notice" style="display:none"></p>
+      <p class="small">Já tens conta? <a href="/login.html">Clica aqui para entrar</a>.</p>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    document.getElementById('btnRegister').addEventListener('click', async () => {
+      const email = document.getElementById('email').value.trim();
+      const name = document.getElementById('name').value.trim();
+      const password = document.getElementById('password').value;
+      const msg = document.getElementById('regMsg');
+      msg.style.display = 'none';
+
+      const res = await apiFetch('/api/auth/register', { method:'POST', body: { email, name, password } });
+      msg.style.display = 'block';
+      if (res.ok) {
+        msg.innerText = 'Registo concluído. Agora faz login.';
+      } else {
+        msg.innerText = 'Erro: ' + (res.error || JSON.stringify(res));
+      }
+    });
+  </script>
+</body>
+</html>
