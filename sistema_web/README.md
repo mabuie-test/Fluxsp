@@ -6,6 +6,12 @@ Estrutura unificada:
 - `storage/media/`: ficheiros de media enviados pelo app.
 
 ## Configuração
+Use o ficheiro `.env.example` como base:
+
+```bash
+cp .env.example .env
+```
+
 Defina variáveis de ambiente:
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
 - `JWT_SECRET`
@@ -14,6 +20,15 @@ Defina variáveis de ambiente:
 - SMTP para recuperação de senha:
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`
   - `MAIL_FROM`, `MAIL_FROM_NAME`
+
+## Criar base de dados (schema.sql)
+Após configurar o `.env`, importe o schema:
+
+```bash
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < app/schema.sql
+```
+
+> Se `DB_PASS` estiver vazio, use o comando sem `-p"$DB_PASS"`.
 
 ## Executar localmente
 ```bash
