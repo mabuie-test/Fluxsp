@@ -24,3 +24,8 @@ Todas as rotas atuais continuam compatíveis sob `/api/*`:
 - `/api/media/*`
 
 A criação de schema MySQL ocorre automaticamente no primeiro request.
+
+
+## Compatibilidade
+- As rotas do app Android continuam em `/api/*` sem alteração de contrato principal.
+- A estrutura antiga (`backend/` e `web-frontend/`) foi removida para evitar duplicação; agora toda a aplicação web roda a partir de `public/` com backend em `app/`.
