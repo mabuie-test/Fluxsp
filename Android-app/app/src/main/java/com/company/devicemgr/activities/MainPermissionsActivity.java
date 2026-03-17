@@ -31,6 +31,10 @@ public class MainPermissionsActivity extends Activity {
     private static final int REQ_CODE_DEVICE_ADMIN = 1001;
     private static final int REQ_CODE_PERMS = 2001;
     private static final int REQ_PICK_MEDIA = 3001;
+    private static final int ANDROID_13_API_LEVEL = 33;
+    private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
+    private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
+    private static final String POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS";
 
     @Override
     protected void onCreate(Bundle s) {
@@ -119,8 +123,8 @@ public class MainPermissionsActivity extends Activity {
     }
 
     private String[] getStoragePermissionsForCurrentVersion() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO};
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return new String[]{READ_MEDIA_IMAGES_PERMISSION, READ_MEDIA_VIDEO_PERMISSION};
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};
@@ -129,8 +133,8 @@ public class MainPermissionsActivity extends Activity {
     }
 
     private void requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requestPermissionsIfNeeded(new String[]{Manifest.permission.POST_NOTIFICATIONS});
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            requestPermissionsIfNeeded(new String[]{POST_NOTIFICATIONS_PERMISSION});
         }
     }
 
