@@ -5,3 +5,6 @@ Android-app/**/build/
 # OS/editor
 .DS_Store
 *.swp
+# prevent accidental legacy backend reinstall
+sistema_web/backend/
+

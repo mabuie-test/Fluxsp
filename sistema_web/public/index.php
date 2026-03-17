@@ -156,6 +156,69 @@ try {
         json_response(['ok' => true, 'userId' => (string) db()->lastInsertId(), 'email' => $email]);
     }
 
+
+    if ($method === 'POST' && $uri === '/api/auth/forgot-password') {
+        $email = trim((string)($body['email'] ?? ''));
+        if ($email !== '') {
+            $st = db()->prepare('SELECT id, email FROM users WHERE email = ? LIMIT 1');
+            $st->execute([$email]);
+            $u = $st->fetch();
+            if ($u) {
+                $rawToken = bin2hex(random_bytes(32));
+                $tokenHash = hash('sha256', $rawToken);
+                $expiresAt = date('Y-m-d H:i:s', time() + 3600);
+
+                $ins = db()->prepare('INSERT INTO password_resets(user_id, token_hash, expires_at) VALUES(?,?,?)');
+                $ins->execute([$u['id'], $tokenHash, $expiresAt]);
+
+                $baseUrl = rtrim((string)(getenv('APP_BASE_URL') ?: ''), '/');
+                if ($baseUrl === '') {
+                    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+                    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+                    $baseUrl = $scheme . '://' . $host;
+                }
+
+                $resetLink = $baseUrl . '/reset-password.html?token=' . urlencode($rawToken);
+                $html = '<p>Recebemos um pedido para recuperar sua senha.</p>'
+                    . '<p><a href="' . htmlspecialchars($resetLink, ENT_QUOTES) . '">Clique aqui para redefinir sua senha</a></p>'
+                    . '<p>Se você não solicitou, ignore este email.</p>';
+
+                send_mail($u['email'], 'Recuperação de senha', $html);
+            }
+        }
+
+        json_response(['ok' => true, 'message' => 'Se o email existir, enviaremos instruções.']);
+    }
+
+    if ($method === 'POST' && $uri === '/api/auth/reset-password') {
+        $token = (string)($body['token'] ?? '');
+        $newPassword = (string)($body['password'] ?? '');
+        if ($token === '' || $newPassword === '') json_response(['ok' => false, 'error' => 'missing_fields'], 400);
+        if (strlen($newPassword) < 6) json_response(['ok' => false, 'error' => 'weak_password'], 400);
+
+        $tokenHash = hash('sha256', $token);
+        $st = db()->prepare('SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW() LIMIT 1');
+        $st->execute([$tokenHash]);
+        $row = $st->fetch();
+        if (!$row) json_response(['ok' => false, 'error' => 'invalid_or_expired_token'], 400);
+
+        db()->beginTransaction();
+        try {
+            $upUser = db()->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+            $upUser->execute([password_hash($newPassword, PASSWORD_BCRYPT), $row['user_id']]);
+
+            $upReset = db()->prepare('UPDATE password_resets SET used_at = NOW() WHERE id = ?');
+            $upReset->execute([$row['id']]);
+
+            db()->commit();
+        } catch (Throwable $e) {
+            if (db()->inTransaction()) db()->rollBack();
+            throw $e;
+        }
+
+        json_response(['ok' => true]);
+    }
+
     // Devices
     if ($method === 'GET' && $uri === '/api/devices/public') {
         $rows = db()->query('SELECT * FROM devices ORDER BY last_seen DESC')->fetchAll();

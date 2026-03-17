@@ -10,26 +10,33 @@ Defina variáveis de ambiente:
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
 - `JWT_SECRET`
 - `ADMIN_REGISTRATION_SECRET` (opcional)
+- `APP_BASE_URL` (opcional, usado no link de recuperação)
+- SMTP para recuperação de senha:
+  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`
+  - `MAIL_FROM`, `MAIL_FROM_NAME`
 
 ## Executar localmente
 ```bash
 php -S 0.0.0.0:3000 -t public
 ```
 
-Todas as rotas atuais continuam compatíveis sob `/api/*`:
-- `/api/auth/*`
-- `/api/devices/*`
-- `/api/telemetry/*`
-- `/api/payments/*`
-- `/api/media/*`
-
-A criação de schema MySQL ocorre automaticamente no primeiro request.
-
+## Dependência de email (PHPMailer)
+```bash
+composer require phpmailer/phpmailer
+```
 
 ## Compatibilidade
 - As rotas do app Android continuam em `/api/*` sem alteração de contrato principal.
 - A estrutura antiga (`backend/` e `web-frontend/`) foi removida para evitar duplicação; agora toda a aplicação web roda a partir de `public/` com backend em `app/`.
 
+## Rotas de autenticação adicionadas
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
+- Páginas web:
+  - `/login.html`
+  - `/register.html`
+  - `/forgot-password.html`
+  - `/reset-password.html`
 
 ## Robustez adicionada
 - Endpoint de health check: `GET /api/health`.
