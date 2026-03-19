@@ -4,40 +4,51 @@
   <meta charset="utf-8"/>
   <title>Painel do Utilizador</title>
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
 </head>
 <body>
   <div class="container">
-    <header style="display:flex;justify-content:space-between;align-items:center;margin:12px 0">
-      <h1>Painel do Utilizador</h1>
-      <button id="logout">Logout</button>
+    <header class="page-header">
+      <div>
+        <h1><i class="fa-solid fa-gauge-high"></i> Painel do Utilizador</h1>
+        <p class="small">Gestão do aparelho, subscrição e estado operacional.</p>
+      </div>
+      <button id="logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
     </header>
 
     <div class="grid">
       <div class="card">
-        <h3>Perfil</h3>
+        <h3><i class="fa-solid fa-user"></i> Perfil</h3>
         <div id="profile">Carregando...</div>
       </div>
       <div class="card">
-        <h3>Subscrição M-Pesa</h3>
+        <h3><i class="fa-solid fa-money-bill-wave"></i> Subscrição M-Pesa</h3>
         <p class="small">Valor por aparelho: <strong>800 MZN / mês</strong></p>
         <input id="mpesaMsisdn" placeholder="Número M-Pesa (84xxxxxxx)" />
-        <button id="btnMpesa">Pagar e Ativar</button>
+        <button id="btnMpesa"><i class="fa-solid fa-bolt"></i> Pagar e Ativar</button>
         <p id="payMsg" class="small"></p>
       </div>
     </div>
 
-    <div class="card">
-      <h3>Meus aparelhos</h3>
-      <table id="devicesTable">
-        <thead><tr><th>DeviceId</th><th>IMEI</th><th>Modelo</th><th>Bateria</th><th>Rede/Operadora</th><th>Sinal</th><th>Online</th><th>Subscrição</th><th>Ações</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <p class="small">A alocação é automática pelo IMEI no primeiro login/envio de telemetria, sem reivindicação manual.</p>
+    <div class="grid">
+      <div class="card">
+        <h3><i class="fa-solid fa-mobile-screen-button"></i> Meus aparelhos</h3>
+        <table id="devicesTable">
+          <thead><tr><th>DeviceId</th><th>IMEI</th><th>Modelo</th><th>Bateria</th><th>Rede/Operadora</th><th>Sinal</th><th>Online</th><th>Subscrição</th><th>Ações</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="small">A alocação é automática pelo IMEI no primeiro login/envio de telemetria, sem reivindicação manual.</p>
+      </div>
+      <div class="card">
+        <h3><i class="fa-solid fa-display"></i> Minha tela</h3>
+        <p class="small">Por privacidade e segurança, o painel web não inicia transmissão remota da tela em tempo real. Esta área fica reservada para futuras opções locais e consentidas no próprio aparelho.</p>
+        <div class="feature-callout"><i class="fa-solid fa-shield-heart"></i> Função remota desativada por segurança.</div>
+      </div>
     </div>
 
     <div class="card">
-      <h3>Histórico de pagamentos</h3>
+      <h3><i class="fa-solid fa-receipt"></i> Histórico de pagamentos</h3>
       <table id="paymentsTable">
         <thead><tr><th>ID</th><th>Device</th><th>Montante</th><th>Método</th><th>Status</th><th>Data</th></tr></thead>
         <tbody></tbody>
@@ -59,14 +70,15 @@
       const el = document.getElementById('profile');
       if (!r.ok) { el.innerText = 'Erro ao carregar perfil'; return; }
       const u = r.user;
-      el.innerHTML = `<div><strong>Nome:</strong> ${u.name || '-'}</div><div><strong>Email:</strong> ${u.email}</div><div><strong>Tipo:</strong> ${u.role}</div><div><strong>Conta ativa:</strong> ${u.active ? 'Sim' : 'Não'}</div>`;
+      el.innerHTML = `<div class="metric-list"><div><strong>Nome:</strong> ${u.name || '-'}</div><div><strong>Email:</strong> ${u.email}</div><div><strong>Tipo:</strong> ${u.role}</div><div><strong>Conta ativa:</strong> ${u.active ? 'Sim' : 'Não'}</div></div>`;
     }
 
     async function loadDevices(){
       const r = await apiFetch('/api/devices/my', { method:'GET' });
       const tbody = document.querySelector('#devicesTable tbody');
       tbody.innerHTML = '';
-      if (!r.ok) { tbody.innerHTML = '<tr><td colspan="9">Erro ao carregar aparelhos</td></tr>'; return; }
+      if (!r.ok) { tbody.innerHTML = '<tr><td colspan="9">Erro ao carregar aparelhos</td></tr>'; return []; }
+      const fragment = document.createDocumentFragment();
       r.devices.forEach(d => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -76,12 +88,14 @@
           <td>${(d.batteryLevel ?? '-')}${d.batteryLevel !== null && d.batteryLevel !== undefined ? '%' : ''}</td>
           <td>${d.networkType || '-'} / ${d.carrier || '-'}</td>
           <td>${d.signalLevel ?? '-'}</td>
-          <td>${d.isOnline ? 'Online' : 'Offline'}<br><small>${fmtDate(d.lastOnlineAt)}</small></td>
+          <td>${d.isOnline ? '<span class="badge badge-success"><i class="fa-solid fa-circle"></i> Online</span>' : '<span class="badge badge-muted"><i class="fa-regular fa-circle"></i> Offline</span>'}<br><small>${fmtDate(d.lastOnlineAt)}</small></td>
           <td>${d.subscriptionStatus || 'inactive'}<br><small>${fmtDate(d.subscriptionUntil)}</small></td>
-          <td><a href="/user/device.html?deviceId=${encodeURIComponent(d.deviceId)}">Ver</a></td>
+          <td><a class="btn-link" href="/user/device.html?deviceId=${encodeURIComponent(d.deviceId)}"><i class="fa-solid fa-arrow-up-right-from-square"></i> Ver</a></td>
         `;
-        tbody.appendChild(tr);
+        fragment.appendChild(tr);
       });
+      tbody.appendChild(fragment);
+      return r.devices;
     }
 
     async function loadPayments(){
@@ -89,11 +103,13 @@
       const tbody = document.querySelector('#paymentsTable tbody');
       tbody.innerHTML = '';
       if (!r.ok) { tbody.innerHTML = '<tr><td colspan="6">Erro ao carregar pagamentos</td></tr>'; return; }
+      const fragment = document.createDocumentFragment();
       r.payments.forEach(p => {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${p.id}</td><td>${p.device_id || '-'}</td><td>${p.amount || '-'} ${p.currency || ''}</td><td>${p.method || '-'}</td><td>${p.status}</td><td>${fmtDate(p.created_at)}</td>`;
-        tbody.appendChild(tr);
+        fragment.appendChild(tr);
       });
+      tbody.appendChild(fragment);
     }
 
     async function payMpesa(){
@@ -109,14 +125,15 @@
       const r = await apiFetch('/api/payments/mpesa/checkout', { method:'POST', body:{ deviceId: target, msisdn } });
       if (!r.ok) { msg.innerText = 'Falha: ' + (r.error || 'erro'); return; }
       msg.innerText = 'Pagamento aprovado. Subscrição ativa até: ' + (r.device.subscriptionUntil || '-');
-      await loadProfile();
-      await loadDevices();
-      await loadPayments();
+      await loadAll();
+    }
+
+    async function loadAll(){
+      await Promise.all([loadProfile(), loadDevices(), loadPayments()]);
     }
 
     document.getElementById('btnMpesa').addEventListener('click', payMpesa);
-
-    (async()=>{ await loadProfile(); await loadDevices(); await loadPayments(); })();
+    loadAll();
   </script>
 </body>
 </html>

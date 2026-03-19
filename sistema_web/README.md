@@ -84,3 +84,11 @@ composer require phpmailer/phpmailer
 ## Administração robusta
 - Novo endpoint para painel admin: `GET /api/admin/overview`
 - Retorna: total de utilizadores/aparelhos, online, subscrições ativas, receita mensal e lista de subscrições a expirar.
+
+
+## Correções e desempenho adicionais
+- A activity de permissões no Android agora mostra o nome do pacote e verifica visualmente se o **Acesso de utilização** e o **Acesso a notificações** foram concedidos.
+- O manifesto Android passou a declarar `PACKAGE_USAGE_STATS`, melhorando a descoberta do app na tela de definições de uso.
+- O frontend web foi otimizado com carregamentos paralelos (`Promise.all`) nas principais páginas do painel.
+- O banco recebeu índices adicionais para consultas de aparelhos, subscrições e pagamentos.
+- A funcionalidade de transmissão remota da tela em tempo real **não foi adicionada**, por envolver vigilância altamente sensível; mantive apenas uma área informativa no painel.

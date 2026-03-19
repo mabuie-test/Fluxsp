@@ -5,6 +5,7 @@
   <title>Mapa do Dispositivo — Visualização</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     body{margin:0;font-family:Inter,system-ui,Arial,sans-serif}
@@ -26,7 +27,7 @@
 <body>
   <div class="container">
     <header style="display:flex;justify-content:space-between;align-items:center">
-      <h2>Mapa do Dispositivo</h2>
+      <h2><i class="fa-solid fa-map-location-dot"></i> Mapa do Dispositivo</h2>
       <div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div>
     </header>
 
@@ -43,8 +44,8 @@
           <label><input type="checkbox" id="realtimeToggle" checked /> Realtime</label>
         </div>
         <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="autoRefresh" /> Auto-refresh (30s)</label>
-        <button id="btnLoad">Carregar</button>
-        <button id="btnClear" style="background:#eef6ff;color:#0b2f6c">Limpar</button>
+        <button id="btnLoad"><i class="fa-solid fa-rotate"></i> Carregar</button>
+        <button id="btnClear" style="background:#eef6ff;color:#0b2f6c"><i class="fa-solid fa-broom"></i> Limpar</button>
       </div>
       <div style="margin-top:8px" id="status" class="small">Pronto</div>
     </div>

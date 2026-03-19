@@ -3,17 +3,21 @@
 <head>
   <meta charset="utf-8"/><title>Aparelho</title>
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 </head>
 <body>
 <div class="container">
-  <header style="display:flex;justify-content:space-between;align-items:center">
-    <h1>Detalhes do aparelho</h1>
-    <div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div>
+  <header class="page-header">
+    <div>
+      <h1><i class="fa-solid fa-mobile-screen"></i> Detalhes do aparelho</h1>
+      <p class="small">Estado técnico e última atividade do dispositivo.</p>
+    </div>
+    <div><a class="btn-link" href="/user/dashboard.html"><i class="fa-solid fa-arrow-left"></i> Voltar</a> <button id="logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</button></div>
   </header>
 
   <div class="card" id="deviceInfo">Carregando...</div>
   <div class="card">
-    <h3>Última telemetria</h3>
+    <h3><i class="fa-solid fa-clock-rotate-left"></i> Última telemetria</h3>
     <pre id="history" style="white-space:pre-wrap"></pre>
   </div>
 </div>
@@ -26,23 +30,28 @@ if (!deviceId) location.href='/user/dashboard.html';
 document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
 async function load(){
-  const d = await apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' });
+  const [d, h] = await Promise.all([
+    apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' }),
+    apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/history', { method:'GET' })
+  ]);
+
   const el = document.getElementById('deviceInfo');
   if (!d.ok) { el.textContent = 'Erro: ' + (d.error || ''); return; }
   const x = d.device;
   el.innerHTML = `
-    <strong>DeviceId:</strong> ${x.deviceId}<br>
-    <strong>IMEI:</strong> ${x.imei || '-'}<br>
-    <strong>Modelo:</strong> ${x.model || '-'}<br>
-    <strong>Online:</strong> ${x.isOnline ? 'Sim' : 'Não'}<br>
-    <strong>Última vez online:</strong> ${x.lastOnlineAt ? new Date(x.lastOnlineAt).toLocaleString() : '-'}<br>
-    <strong>Bateria:</strong> ${x.batteryLevel ?? '-'}<br>
-    <strong>Rede:</strong> ${x.networkType || '-'} / ${x.carrier || '-'}<br>
-    <strong>Sinal:</strong> ${x.signalLevel ?? '-'}<br>
-    <strong>Subscrição:</strong> ${x.subscriptionStatus} até ${x.subscriptionUntil ? new Date(x.subscriptionUntil).toLocaleString() : '-'}
+    <div class="metric-list">
+      <div><strong>DeviceId:</strong> ${x.deviceId}</div>
+      <div><strong>IMEI:</strong> ${x.imei || '-'}</div>
+      <div><strong>Modelo:</strong> ${x.model || '-'}</div>
+      <div><strong>Online:</strong> ${x.isOnline ? 'Sim' : 'Não'}</div>
+      <div><strong>Última vez online:</strong> ${x.lastOnlineAt ? new Date(x.lastOnlineAt).toLocaleString() : '-'}</div>
+      <div><strong>Bateria:</strong> ${x.batteryLevel ?? '-'}</div>
+      <div><strong>Rede:</strong> ${x.networkType || '-'} / ${x.carrier || '-'}</div>
+      <div><strong>Sinal:</strong> ${x.signalLevel ?? '-'}</div>
+      <div><strong>Subscrição:</strong> ${x.subscriptionStatus} até ${x.subscriptionUntil ? new Date(x.subscriptionUntil).toLocaleString() : '-'}</div>
+    </div>
   `;
 
-  const h = await apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/history', { method:'GET' });
   const history = document.getElementById('history');
   if (!h.ok) {
     history.textContent = h.error === 'subscription_required'

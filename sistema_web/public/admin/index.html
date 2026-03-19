@@ -4,26 +4,30 @@
   <meta charset="utf-8"/>
   <title>Admin</title>
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 </head>
 <body>
 <div class="container">
-  <header style="display:flex;justify-content:space-between;align-items:center">
-    <h1>Painel Administrativo</h1>
-    <div><button id="refresh">Atualizar</button> <button id="logout">Logout</button></div>
+  <header class="page-header">
+    <div>
+      <h1><i class="fa-solid fa-screwdriver-wrench"></i> Painel Administrativo</h1>
+      <p class="small">Operação, receita, aparelhos e subscrições.</p>
+    </div>
+    <div class="action-row"><button id="refresh"><i class="fa-solid fa-rotate"></i> Atualizar</button> <button id="logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</button></div>
   </header>
 
   <div class="grid">
-    <div class="card"><h3>Resumo</h3><div id="summary">Carregando...</div></div>
-    <div class="card"><h3>Subscrições a expirar</h3><ul id="expiring"></ul></div>
+    <div class="card"><h3><i class="fa-solid fa-chart-line"></i> Resumo</h3><div id="summary">Carregando...</div></div>
+    <div class="card"><h3><i class="fa-solid fa-hourglass-half"></i> Subscrições a expirar</h3><ul id="expiring"></ul></div>
   </div>
 
   <div class="card">
-    <h3>Aparelhos</h3>
+    <h3><i class="fa-solid fa-server"></i> Aparelhos</h3>
     <table id="devices"><thead><tr><th>DeviceId</th><th>IMEI</th><th>Modelo</th><th>Dono</th><th>Online</th><th>Subscrição</th></tr></thead><tbody></tbody></table>
   </div>
 
   <div class="card">
-    <h3>Pagamentos</h3>
+    <h3><i class="fa-solid fa-cash-register"></i> Pagamentos</h3>
     <table id="payments"><thead><tr><th>ID</th><th>User</th><th>Device</th><th>Montante</th><th>Método</th><th>Status</th><th>Ações</th></tr></thead><tbody></tbody></table>
   </div>
 </div>
@@ -36,33 +40,39 @@ async function loadOverview(){
   const r = await apiFetch('/api/admin/overview', { method:'GET' });
   if (!r.ok) { document.getElementById('summary').innerText='Erro'; return; }
   const s = r.summary;
-  document.getElementById('summary').innerHTML = `<div>Utilizadores: ${s.users}</div><div>Aparelhos: ${s.devices}</div><div>Online: ${s.onlineDevices}</div><div>Subscrições ativas: ${s.activeSubscriptions}</div><div>Receita (30d): ${s.monthlyRevenueMzn} MZN</div>`;
+  document.getElementById('summary').innerHTML = `<div class="metric-list"><div><strong>Utilizadores:</strong> ${s.users}</div><div><strong>Aparelhos:</strong> ${s.devices}</div><div><strong>Online:</strong> ${s.onlineDevices}</div><div><strong>Subscrições ativas:</strong> ${s.activeSubscriptions}</div><div><strong>Receita (30d):</strong> ${s.monthlyRevenueMzn} MZN</div></div>`;
   const ul=document.getElementById('expiring'); ul.innerHTML='';
-  r.expiringSoon.forEach(x=>{ const li=document.createElement('li'); li.textContent=`${x.device_id} (${x.model||'-'}) até ${new Date(x.subscription_until).toLocaleString()}`; ul.appendChild(li); });
+  const fragment = document.createDocumentFragment();
+  r.expiringSoon.forEach(x=>{ const li=document.createElement('li'); li.textContent=`${x.device_id} (${x.model||'-'}) até ${new Date(x.subscription_until).toLocaleString()}`; fragment.appendChild(li); });
+  ul.appendChild(fragment);
 }
 
 async function loadDevices(){
   const r = await apiFetch('/api/devices', { method:'GET' });
   const tb=document.querySelector('#devices tbody'); tb.innerHTML='';
   if (!r.ok) return;
-  r.devices.forEach(d=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${d.deviceId}</td><td>${d.imei||'-'}</td><td>${d.model||'-'}</td><td>${d.ownerUserId||'-'}</td><td>${d.isOnline?'Online':'Offline'}</td><td>${d.subscriptionStatus} ${d.subscriptionUntil?('até '+new Date(d.subscriptionUntil).toLocaleDateString()):''}</td>`; tb.appendChild(tr); });
+  const fragment = document.createDocumentFragment();
+  r.devices.forEach(d=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${d.deviceId}</td><td>${d.imei||'-'}</td><td>${d.model||'-'}</td><td>${d.ownerUserId||'-'}</td><td>${d.isOnline?'<span class="badge badge-success"><i class="fa-solid fa-circle"></i> Online</span>':'<span class="badge badge-muted"><i class="fa-regular fa-circle"></i> Offline</span>'}</td><td>${d.subscriptionStatus} ${d.subscriptionUntil?('até '+new Date(d.subscriptionUntil).toLocaleDateString()):''}</td>`; fragment.appendChild(tr); });
+  tb.appendChild(fragment);
 }
 
 async function processPayment(id,action){
   const r=await apiFetch('/api/payments/'+id+'/process',{method:'POST',body:{action}});
   if(!r.ok) alert('Falha: '+(r.error||''));
-  await loadPayments(); await loadOverview(); await loadDevices();
+  await loadAll();
 }
 
 async function loadPayments(){
   const r = await apiFetch('/api/payments', { method:'GET' });
   const tb=document.querySelector('#payments tbody'); tb.innerHTML='';
   if (!r.ok) return;
-  r.payments.forEach(p=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${p.id}</td><td>${p.email||'-'}</td><td>${p.device_id||'-'}</td><td>${p.amount||'-'} ${p.currency||''}</td><td>${p.method||'-'}</td><td>${p.status}</td><td><button data-a="approve" data-id="${p.id}">Aprovar</button> <button data-a="reject" data-id="${p.id}">Rejeitar</button></td>`; tb.appendChild(tr); });
+  const fragment = document.createDocumentFragment();
+  r.payments.forEach(p=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${p.id}</td><td>${p.email||'-'}</td><td>${p.device_id||'-'}</td><td>${p.amount||'-'} ${p.currency||''}</td><td>${p.method||'-'}</td><td>${p.status}</td><td><button data-a="approve" data-id="${p.id}"><i class="fa-solid fa-check"></i></button> <button data-a="reject" data-id="${p.id}"><i class="fa-solid fa-xmark"></i></button></td>`; fragment.appendChild(tr); });
+  tb.appendChild(fragment);
   tb.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>processPayment(b.dataset.id,b.dataset.a)));
 }
 
-async function loadAll(){ await loadOverview(); await loadDevices(); await loadPayments(); }
+async function loadAll(){ await Promise.all([loadOverview(), loadDevices(), loadPayments()]); }
 document.getElementById('refresh').addEventListener('click', loadAll);
 loadAll();
 </script>

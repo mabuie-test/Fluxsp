@@ -91,3 +91,12 @@ ALTER TABLE payments
 
 ALTER TABLE payments
   ADD INDEX IF NOT EXISTS idx_payments_device_id (device_id);
+
+
+ALTER TABLE devices
+  ADD INDEX IF NOT EXISTS idx_devices_owner_last_seen (owner_user_id, last_seen),
+  ADD INDEX IF NOT EXISTS idx_devices_subscription_status (subscription_status, subscription_until);
+
+ALTER TABLE payments
+  ADD INDEX IF NOT EXISTS idx_payments_status_created (status, created_at),
+  ADD INDEX IF NOT EXISTS idx_payments_user_created (user_id, created_at);
