@@ -7,6 +7,7 @@ import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -18,18 +19,19 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.receivers.DeviceAdminReceiver;
-import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.AppRuntime;
+import com.company.devicemgr.utils.DeviceIdentity;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainPermissionsActivity extends Activity {
-    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnGrantSupportConsent, btnStartService, btnPickMedia;
-    TextView tvStatus, tvDeviceId, tvSupportConsentStatus, tvRemoteSupportState;
+    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnGrantSupportConsent, btnGrantScreenCapture, btnStartService, btnPickMedia;
+    TextView tvStatus, tvDeviceId, tvSupportConsentStatus, tvScreenCaptureStatus, tvRemoteSupportState;
     private static final int REQ_CODE_DEVICE_ADMIN = 1001;
     private static final int REQ_CODE_PERMS = 2001;
     private static final int REQ_PICK_MEDIA = 3001;
+    private static final int REQ_CODE_MEDIA_PROJECTION = 3002;
     private static final String SUPPORT_CONSENT_VERSION = "support-session-v2";
     private static final int ANDROID_13_API_LEVEL = 33;
     private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
@@ -49,12 +51,14 @@ public class MainPermissionsActivity extends Activity {
         btnNotifAccess = findViewById(com.company.devicemgr.R.id.btnNotifAccess);
         btnUsageAccess = findViewById(com.company.devicemgr.R.id.btnUsageAccess);
         btnGrantSupportConsent = findViewById(com.company.devicemgr.R.id.btnGrantSupportConsent);
+        btnGrantScreenCapture = findViewById(com.company.devicemgr.R.id.btnGrantScreenCapture);
         btnStartService = findViewById(com.company.devicemgr.R.id.btnStartService);
         btnPickMedia = findViewById(com.company.devicemgr.R.id.btnPickMedia);
 
         tvStatus = findViewById(com.company.devicemgr.R.id.tvStatus);
         tvDeviceId = findViewById(com.company.devicemgr.R.id.tvDeviceId);
         tvSupportConsentStatus = findViewById(com.company.devicemgr.R.id.tvSupportConsentStatus);
+        tvScreenCaptureStatus = findViewById(com.company.devicemgr.R.id.tvScreenCaptureStatus);
         tvRemoteSupportState = findViewById(com.company.devicemgr.R.id.tvRemoteSupportState);
 
         final android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
@@ -85,7 +89,10 @@ public class MainPermissionsActivity extends Activity {
 
         btnStoragePerm.setOnClickListener(v -> requestPermissionsIfNeeded(getStoragePermissionsForCurrentVersion()));
 
-        btnCallLogPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{Manifest.permission.READ_CALL_LOG}));
+        btnCallLogPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{
+                Manifest.permission.READ_CALL_LOG,
+                Manifest.permission.READ_CONTACTS
+        }));
 
         btnSmsPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{
                 Manifest.permission.READ_SMS,
@@ -104,6 +111,13 @@ public class MainPermissionsActivity extends Activity {
                 .setTitle("Consentimento remoto")
                 .setMessage("Autoriza uma única vez o uso remoto de ecrã e áudio neste dispositivo? Depois disso, o painel web poderá iniciar ou parar sessões enquanto o telemóvel estiver online.")
                 .setPositiveButton("Autorizar", (d, which) -> grantRemoteSupportConsent())
+                .setNegativeButton("Cancelar", null)
+                .show());
+
+        btnGrantScreenCapture.setOnClickListener(v -> new AlertDialog.Builder(MainPermissionsActivity.this)
+                .setTitle("Captura live de ecrã")
+                .setMessage("Para streaming remoto real do ecrã, o Android precisa de uma autorização do sistema para MediaProjection. Aceite a próxima janela para disponibilizar frames live ao painel web enquanto o processo da app estiver ativo.")
+                .setPositiveButton("Continuar", (d, which) -> requestScreenCaptureGrant())
                 .setNegativeButton("Cancelar", null)
                 .show());
 
@@ -148,6 +162,19 @@ public class MainPermissionsActivity extends Activity {
         }
     }
 
+    private void requestScreenCaptureGrant() {
+        MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        if (manager == null) {
+            showMsg("MediaProjection indisponível neste dispositivo");
+            return;
+        }
+        try {
+            startActivityForResult(manager.createScreenCaptureIntent(), REQ_CODE_MEDIA_PROJECTION);
+        } catch (Exception e) {
+            showMsg("Erro ao pedir captura de ecrã: " + e.getMessage());
+        }
+    }
+
     private void startTelemetryService() {
         android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
         if (!sp.getBoolean("support_consent_granted", false)) {
@@ -180,6 +207,7 @@ public class MainPermissionsActivity extends Activity {
         tvStatus.setText("Token: " + (token != null ? "OK" : "missing"));
         tvDeviceId.setText("DeviceId: " + deviceId);
         updateSupportConsentStatus();
+        updateScreenCaptureStatus();
         updateRemoteSupportState();
     }
 
@@ -191,6 +219,14 @@ public class MainPermissionsActivity extends Activity {
                 ? "Consentimento remoto: autorizado" + (version != null ? " (" + version + ")" : "")
                 : "Consentimento remoto: pendente");
         btnGrantSupportConsent.setEnabled(!granted);
+    }
+
+    private void updateScreenCaptureStatus() {
+        if (!AppRuntime.hasMediaProjectionGrant()) {
+            tvScreenCaptureStatus.setText("Captura live de ecrã: pendente");
+            return;
+        }
+        tvScreenCaptureStatus.setText("Captura live de ecrã: pronta (" + new java.util.Date(AppRuntime.getMediaProjectionGrantedAt()) + ")");
     }
 
     private void updateRemoteSupportState() {
@@ -264,6 +300,15 @@ public class MainPermissionsActivity extends Activity {
                 showMsg("Media seleccionada: " + uri.toString());
                 getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).edit().putString("last_media_uri", uri.toString()).apply();
             }
+        } else if (requestCode == REQ_CODE_MEDIA_PROJECTION) {
+            if (resultCode == RESULT_OK && data != null) {
+                AppRuntime.setMediaProjectionGrant(resultCode, data);
+                showMsg("Captura live de ecrã autorizada");
+            } else {
+                AppRuntime.clearMediaProjectionGrant();
+                showMsg("Captura live de ecrã recusada");
+            }
+            updateStatusText();
         }
     }
 

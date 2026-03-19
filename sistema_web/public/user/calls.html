@@ -23,12 +23,21 @@
       if (!r.ok) { ul.innerHTML = '<li>Erro: ' + JSON.stringify(r) + '</li>'; return; }
       r.items.forEach(it => {
         const ts = new Date(it.ts).toLocaleString();
-        const p = it.payload || it;
-        const number = p.payload && p.payload.number ? p.payload.number : (p.number||'');
-        const dir = p.payload && p.payload.direction ? p.payload.direction : (p.direction||'');
-        const dur = p.payload && p.payload.duration ? p.payload.duration : (p.duration||'');
+        const p = it.call || it.payload || it;
+        const number = p.number || '';
+        const name = p.contactName || 'Sem nome';
+        const dir = p.direction || '';
+        const dur = p.duration || '';
+        const recording = p.recording || null;
         const li = document.createElement('li');
-        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small>${ts}</small><div><strong>Number:</strong> ${number}</div><div><strong>Direction:</strong> ${dir}</div><div><strong>Duration:</strong> ${dur}</div></div>`;
+        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee">
+          <small>${ts}</small>
+          <div><strong>Nome:</strong> ${name}</div>
+          <div><strong>Número:</strong> ${number}</div>
+          <div><strong>Direção:</strong> ${dir}</div>
+          <div><strong>Duração:</strong> ${dur}</div>
+          <div>${recording?.previewUrl ? `<audio controls preload="metadata"><source src="${recording.previewUrl}" type="audio/mp4"></audio> <a href="${recording.downloadUrl}" target="_blank" rel="noopener">Descarregar áudio</a>` : 'Sem gravação disponível'}</div>
+        </div>`;
         ul.appendChild(li);
       });
     });

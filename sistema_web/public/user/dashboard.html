@@ -1,267 +1,350 @@
-  <!doctype html>
+<!doctype html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <title>User Dashboard</title>
   <link rel="stylesheet" href="/css/styles.css">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <style>
-    .small { font-size:0.9em; color:#666; }
-    .grid { display:grid; grid-template-columns: 1fr; gap:12px; }
-    @media(min-width:900px){ .grid{grid-template-columns: 1fr 1fr;} }
-    .card{ background:#fff; padding:12px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
-    input, button { padding:8px; margin:6px 0; width:100%; box-sizing:border-box; }
-    table td, table th { padding:6px; border-bottom:1px solid #eee; }
-  </style>
 </head>
 <body>
   <div class="container">
-    <header style="display:flex;justify-content:space-between;align-items:center;margin:12px 0">
-      <h1>User Dashboard</h1>
+    <header class="page-header">
       <div>
+        <h1>Painel do utilizador</h1>
+        <p class="small">Vista unificada do perfil, dispositivos, pagamentos M-Pesa e observabilidade operacional.</p>
+      </div>
+      <div class="action-row">
         <button id="logout">Logout</button>
       </div>
     </header>
 
-    <div class="grid">
-      <div class="card">
-        <h3>Profile</h3>
-        <div id="profileHtml">Loading profile...</div>
-      </div>
+    <section class="grid dashboard-top-grid">
+      <article class="card">
+        <h3>Perfil</h3>
+        <div id="profileHtml" class="info-stack">A carregar perfil...</div>
+      </article>
 
-      <div class="card">
-        <h3>Devices</h3>
-
-        <p class="small">O dispositivo da app é associado automaticamente no login. Já não é necessário reivindicar manualmente.</p>
-
-        <div style="margin-bottom:8px">
-          <a id="linkMap" href="#" >Ver Mapa</a> |
-          <a id="linkNotifications" href="#">Notificações</a> |
-          <a id="linkMessages" href="#">Mensagens</a> |
-          <a id="linkCalls" href="#">Chamadas</a> |
-          <a id="linkMedia" href="#">Media</a>
+      <article class="card">
+        <h3>Navegação rápida</h3>
+        <p class="small">O dispositivo é associado automaticamente no login. Escolha um dispositivo abaixo para abrir módulos relacionados.</p>
+        <div class="quick-links" id="quickLinks">
+          <a class="btn-link" id="linkMap" href="#">Mapa</a>
+          <a class="btn-link" id="linkNotifications" href="#">Notificações</a>
+          <a class="btn-link" id="linkMessages" href="#">Mensagens</a>
+          <a class="btn-link" id="linkCalls" href="#">Chamadas</a>
+          <a class="btn-link" id="linkMedia" href="#">Media</a>
         </div>
+      </article>
+    </section>
 
-        <table id="myDevices" style="width:100%;border-collapse:collapse">
-          <thead><tr><th>DeviceId</th><th>Name</th><th>Last Seen</th><th>Ações</th></tr></thead>
+    <section class="grid dashboard-main-grid">
+      <article class="card dashboard-devices-card">
+        <div class="section-header">
+          <div>
+            <h3>Dispositivos</h3>
+            <p class="small">Selecione um dispositivo para ver métricas de pipeline e sincronização remota.</p>
+          </div>
+          <div class="badge badge-muted" id="deviceCountBadge">0 dispositivos</div>
+        </div>
+        <div class="table-wrap">
+          <table id="myDevices">
+            <thead>
+              <tr>
+                <th>DeviceId</th>
+                <th>Nome</th>
+                <th>Último contacto</th>
+                <th>Estado</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card dashboard-observability-card">
+        <div class="section-header">
+          <div>
+            <h3>Observabilidade do dispositivo</h3>
+            <p class="small" id="observabilityDeviceLabel">Selecione um dispositivo para ver as métricas.</p>
+          </div>
+          <div class="badge" id="observabilitySyncBadge">Sem dados</div>
+        </div>
+        <div id="observabilityGrid" class="metric-list"></div>
+        <div id="observabilityNotes" class="info-stack small"></div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <h3>Pagamento mensal via M-Pesa</h3>
+          <p class="small">Pagamento mensal fixo de 800 MZN via Débito C2B M-Pesa. O valor não é editável e, assim que a transação for confirmada, a conta fica ativa.</p>
+        </div>
+      </div>
+      <div class="form-grid">
+        <input id="mpesaMsisdn" placeholder="MSISDN (ex.: 855827001)" />
+        <input id="mpesaAmount" type="text" value="800 MZN / mensal" readonly />
+        <input id="mpesaReference" placeholder="Descrição da referência" value="Pagamento mensal 800 MZN" />
+        <input id="mpesaNote" placeholder="Nota interna (opcional)" />
+      </div>
+      <div class="action-row">
+        <button id="sendMpesaPayment">Pagar com M-Pesa</button>
+      </div>
+      <p id="payMsg" class="small"></p>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <h3>Meus pagamentos M-Pesa</h3>
+          <p class="small">Use “Atualizar estado” para consultar a referência Debito e sincronizar o estado local com o provedor.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="myPayments">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>MSISDN</th>
+              <th>Montante</th>
+              <th>Estado</th>
+              <th>Estado provedor</th>
+              <th>Referência Debito</th>
+              <th>Última verificação</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
           <tbody></tbody>
         </table>
       </div>
-    </div>
-
-    <div class="card" style="margin-top:12px">
-      <h3>Enviar comprovativo de pagamento</h3>
-      <input id="amount" type="number" placeholder="Amount" />
-      <input id="method" placeholder="Method (e.g. bank transfer)" />
-      <input id="note" placeholder="Note (optional)" />
-      <input id="file" type="file" />
-      <button id="sendPayment">Enviar</button>
-      <p id="payMsg" class="small"></p>
-    </div>
-
-    <div class="card" style="margin-top:12px">
-      <h3>Meus Pagamentos</h3>
-      <table id="myPayments" style="width:100%;border-collapse:collapse">
-        <thead><tr><th>ID</th><th>Amount</th><th>Status</th><th>Created</th><th>Comprovativo</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-
+    </section>
   </div>
 
   <script src="/js/api.js"></script>
   <script>
-    // ---------- setup ----------
     const token = localStorage.getItem('auth_token');
-    if (!token) { location.href = '/'; }
+    if (!token) location.href = '/';
 
-    document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
+    const state = {
+      devices: [],
+      selectedDeviceId: null
+    };
 
-    // ---------- helpers ----------
+    document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/'; });
+
     function getPrimaryDeviceIdFromTable() {
-      const tbody = document.querySelector('#myDevices tbody');
-      const firstRow = tbody.querySelector('tr');
-      if (!firstRow) return null;
-      const firstCell = firstRow.querySelector('td');
-      if (!firstCell) return null;
-      return firstCell.textContent.trim();
+      return state.selectedDeviceId || (state.devices[0] && state.devices[0].deviceId) || null;
     }
 
-    function openWithTokenBlob(url, filenameHint) {
-      return fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
-        .then(async res => {
-          if (!res.ok) {
-            const txt = await res.text();
-            throw new Error(txt || ('status ' + res.status));
-          }
-          return res.blob();
-        })
-        .then(blob => {
-          const urlObj = URL.createObjectURL(blob);
-          window.open(urlObj, '_blank');
-          // revoke later
-          setTimeout(()=> URL.revokeObjectURL(urlObj), 30*60*1000);
-        });
-    }
-
-    // ---------- profile ----------
-    async function loadProfile() {
-      const r = await apiFetch('/api/auth/me', { method:'GET' });
-      const el = document.getElementById('profileHtml');
-      if (!r.ok) { el.innerText = 'Erro: ' + (r.error || JSON.stringify(r)); return; }
-      const user = r.user;
-      el.innerHTML = `
-        <div><strong>Name:</strong> ${user.name || '-'}</div>
-        <div><strong>Email:</strong> ${user.email || '-'}</div>
-        <div><strong>Role:</strong> ${user.role || '-'}</div>
-        <div><strong>Active:</strong> ${user.active ? 'Yes' : 'No'}</div>
-      `;
-      // if not active, add note
-      if (!user.active) el.insertAdjacentHTML('beforeend','<div class="small" style="color:#a00;margin-top:6px">Conta não activa. Paga para ver dados.</div>');
-      return user;
-    }
-
-    // ---------- devices ----------
-    async function loadMyDevices() {
-      const r = await apiFetch('/api/devices/my', { method:'GET' });
-      const tbody = document.querySelector('#myDevices tbody');
-      tbody.innerHTML = '';
-      if (!r.ok) { tbody.innerHTML = '<tr><td colspan="4">Erro: ' + (r.error||JSON.stringify(r)) + '</td></tr>'; return; }
-      r.devices.forEach(d => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${d.deviceId}</td>
-          <td>${d.name || ''}</td>
-          <td>${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'}</td>
-          <td><button data-id="${d.deviceId}" class="btnView">Ver</button></td>
-        `;
-        tbody.appendChild(tr);
-      });
-
-      // attach handlers (delegated would also work)
-      document.querySelectorAll('.btnView').forEach(b => {
-        b.addEventListener('click', () => {
-          const id = b.getAttribute('data-id');
-          window.location = '/user/device.html?deviceId=' + encodeURIComponent(id);
-        });
-      });
-    }
-
-    // ---------- payments ----------
-    async function loadMyPayments() {
-      const r = await apiFetch('/api/payments/mine', { method:'GET' });
-      const tbody = document.querySelector('#myPayments tbody');
-      tbody.innerHTML = '';
-      if (!r.ok) { tbody.innerHTML = '<tr><td colspan="5">Erro: ' + (r.error||JSON.stringify(r)) + '</td></tr>'; return; }
-      r.payments.forEach(p => {
-        const tr = document.createElement('tr');
-        const mediaCell = p.mediaFileId
-          ? `<button class="btnViewPaymentMedia" data-fileid="${p.mediaFileId}">Ver</button>`
-          : '-';
-        tr.innerHTML = `
-          <td>${p._id}</td>
-          <td>${p.amount || ''} ${p.currency || ''}</td>
-          <td>${p.status}</td>
-          <td>${new Date(p.createdAt).toLocaleString()}</td>
-          <td>${mediaCell}</td>
-        `;
-        tbody.appendChild(tr);
-      });
-
-      // attach handlers for media
-      document.querySelectorAll('.btnViewPaymentMedia').forEach(b => {
-        b.addEventListener('click', async () => {
-          const fileId = b.getAttribute('data-fileid');
-          try {
-            await openWithTokenBlob('/api/media/download/' + encodeURIComponent(fileId));
-          } catch (err) {
-            alert('Erro ao abrir comprovativo: ' + (err.message || err));
-          }
-        });
-      });
-    }
-
-    // ---------- send payment (upload file then create) ----------
-    document.getElementById('sendPayment').addEventListener('click', async () => {
-      const fileEl = document.getElementById('file');
-      const amount = parseFloat(document.getElementById('amount').value || 0);
-      const method = document.getElementById('method').value;
-      const note = document.getElementById('note').value;
-      if (fileEl.files.length === 0) { document.getElementById('payMsg').innerText = 'Escolhe um ficheiro'; return; }
-      document.getElementById('payMsg').innerText = 'Enviando...';
-      const form = new FormData();
-      form.append('media', fileEl.files[0]);
-
-      try {
-        // upload (endpoint must accept Authorization header)
-        const uploadRes = await fetch('/api/media/payment/upload', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + token },
-          body: form
-        }).then(r => r.json());
-
-        if (!uploadRes.ok) { document.getElementById('payMsg').innerText = 'Upload failed: ' + JSON.stringify(uploadRes); return; }
-
-        const mediaFileId = uploadRes.fileId;
-        const createRes = await apiFetch('/api/payments', { method:'POST', body: { amount, method, note, mediaFileId } });
-        if (createRes.ok) {
-          document.getElementById('payMsg').innerText = 'Pagamento enviado. ID: ' + createRes.id;
-          fileEl.value = '';
-          document.getElementById('amount').value = '';
-          document.getElementById('method').value = '';
-          document.getElementById('note').value = '';
-          await loadMyPayments();
-        } else {
-          document.getElementById('payMsg').innerText = 'Erro ao criar pagamento: ' + JSON.stringify(createRes);
-        }
-      } catch (err) {
-        document.getElementById('payMsg').innerText = 'Erro: ' + err.message;
-      }
-    });
-
-    // ---------- link handlers (map/notifications/messages/calls/media) ----------
-    // behavior:
-    //  - if user has at least one device, use the first deviceId from the table
-    //  - else prompt for deviceId
     function chooseDeviceIdOrPrompt() {
       let id = getPrimaryDeviceIdFromTable();
       if (!id) id = prompt('Insere o deviceId que queres visualizar:');
       return id;
     }
 
-    document.getElementById('linkMap').addEventListener('click', (e) => {
-      e.preventDefault();
-      const id = chooseDeviceIdOrPrompt();
-      if (id) window.location = '/user/map.html?deviceId=' + encodeURIComponent(id);
-    });
-    document.getElementById('linkNotifications').addEventListener('click', (e) => {
-      e.preventDefault();
-      const id = chooseDeviceIdOrPrompt();
-      if (id) window.location = '/user/notifications.html?deviceId=' + encodeURIComponent(id);
-    });
-    document.getElementById('linkMessages').addEventListener('click', (e) => {
-      e.preventDefault();
-      const id = chooseDeviceIdOrPrompt();
-      if (id) window.location = '/user/messages.html?deviceId=' + encodeURIComponent(id);
-    });
-    document.getElementById('linkCalls').addEventListener('click', (e) => {
-      e.preventDefault();
-      const id = chooseDeviceIdOrPrompt();
-      if (id) window.location = '/user/calls.html?deviceId=' + encodeURIComponent(id);
-    });
-    document.getElementById('linkMedia').addEventListener('click', (e) => {
-      e.preventDefault();
-      const id = chooseDeviceIdOrPrompt();
-      if (id) window.location = '/user/media.html?deviceId=' + encodeURIComponent(id);
+    function bindNavigationLink(elementId, path) {
+      document.getElementById(elementId).addEventListener('click', (e) => {
+        e.preventDefault();
+        const id = chooseDeviceIdOrPrompt();
+        if (id) window.location = path + encodeURIComponent(id);
+      });
+    }
+
+    bindNavigationLink('linkMap', '/user/map.html?deviceId=');
+    bindNavigationLink('linkNotifications', '/user/notifications.html?deviceId=');
+    bindNavigationLink('linkMessages', '/user/messages.html?deviceId=');
+    bindNavigationLink('linkCalls', '/user/calls.html?deviceId=');
+    bindNavigationLink('linkMedia', '/user/media.html?deviceId=');
+
+    function metricCard(label, value, detail) {
+      return `
+        <div class="media-stat observability-stat">
+          <span class="small">${label}</span>
+          <strong>${value}</strong>
+          <span class="small">${detail || '—'}</span>
+        </div>
+      `;
+    }
+
+    async function loadProfile() {
+      const r = await apiFetch('/api/auth/me', { method:'GET' });
+      const el = document.getElementById('profileHtml');
+      if (!r.ok) {
+        el.innerHTML = `<div class="small">Erro: ${r.error || JSON.stringify(r)}</div>`;
+        return;
+      }
+      const user = r.user;
+      el.innerHTML = `
+        <div><strong>Nome:</strong> ${user.name || '-'}</div>
+        <div><strong>Email:</strong> ${user.email || '-'}</div>
+        <div><strong>Perfil:</strong> ${user.role || '-'}</div>
+        <div><strong>Conta ativa:</strong> ${user.active ? 'Sim' : 'Não'}</div>
+        ${!user.active ? '<div class="inline-alert">Conta não ativa. Regularize o pagamento mensal por M-Pesa para ver dados protegidos.</div>' : ''}
+      `;
+    }
+
+    function renderDevices() {
+      const tbody = document.querySelector('#myDevices tbody');
+      tbody.innerHTML = '';
+      document.getElementById('deviceCountBadge').textContent = `${state.devices.length} dispositivo(s)`;
+      if (!state.devices.length) {
+        tbody.innerHTML = '<tr><td colspan="5">Nenhum dispositivo associado.</td></tr>';
+        return;
+      }
+      state.devices.forEach(d => {
+        const tr = document.createElement('tr');
+        const isOnline = !!d.isOnline;
+        const isSelected = d.deviceId === state.selectedDeviceId;
+        tr.innerHTML = `
+          <td>${d.deviceId}</td>
+          <td>${d.name || '—'}</td>
+          <td>${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '—'}</td>
+          <td><span class="badge ${isOnline ? 'badge-success' : 'badge-muted'}">${isOnline ? 'Online' : 'Offline'}</span></td>
+          <td>
+            <div class="action-row">
+              <button class="btnView" data-id="${d.deviceId}">Abrir</button>
+              <button class="btnObserve ${isSelected ? 'is-active' : ''}" data-id="${d.deviceId}">Métricas</button>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.querySelectorAll('.btnView').forEach(b => {
+        b.addEventListener('click', () => {
+          const id = b.getAttribute('data-id');
+          window.location = '/user/device.html?deviceId=' + encodeURIComponent(id);
+        });
+      });
+
+      document.querySelectorAll('.btnObserve').forEach(b => {
+        b.addEventListener('click', async () => {
+          state.selectedDeviceId = b.getAttribute('data-id');
+          renderDevices();
+          await loadObservability(state.selectedDeviceId);
+        });
+      });
+    }
+
+    async function loadMyDevices() {
+      const r = await apiFetch('/api/devices/my', { method:'GET' });
+      const tbody = document.querySelector('#myDevices tbody');
+      tbody.innerHTML = '';
+      if (!r.ok) {
+        tbody.innerHTML = '<tr><td colspan="5">Erro: ' + (r.error || JSON.stringify(r)) + '</td></tr>';
+        return;
+      }
+      state.devices = r.devices || [];
+      state.selectedDeviceId = state.selectedDeviceId || (state.devices[0] && state.devices[0].deviceId) || null;
+      renderDevices();
+      if (state.selectedDeviceId) await loadObservability(state.selectedDeviceId);
+    }
+
+    async function loadObservability(deviceId) {
+      const grid = document.getElementById('observabilityGrid');
+      const notes = document.getElementById('observabilityNotes');
+      const label = document.getElementById('observabilityDeviceLabel');
+      const badge = document.getElementById('observabilitySyncBadge');
+      if (!deviceId) {
+        grid.innerHTML = '';
+        notes.innerHTML = 'Selecione um dispositivo para ver as métricas.';
+        badge.textContent = 'Sem dados';
+        return;
+      }
+      label.textContent = 'Dispositivo selecionado: ' + deviceId;
+      const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId) + '/observability', { method:'GET' });
+      if (!r.ok) {
+        grid.innerHTML = '';
+        notes.innerHTML = 'Erro ao carregar observabilidade: ' + (r.error || JSON.stringify(r));
+        badge.textContent = 'Erro';
+        return;
+      }
+      const media = r.observability.media || {};
+      const remote = r.observability.remoteSync || {};
+      grid.innerHTML = [
+        metricCard('Uploads 24h', media.recentUploads ?? 0, 'Falhas: ' + (media.failedUploads ?? 0)),
+        metricCard('Latência média upload', media.avgUploadMs ? media.avgUploadMs + ' ms' : '—', media.latestUploadAt ? 'Último: ' + new Date(media.latestUploadAt).toLocaleString() : 'Sem uploads recentes'),
+        metricCard('Downloads parciais 24h', media.partialDownloads24h ?? 0, 'Erros: ' + (media.downloadErrors24h ?? 0)),
+        metricCard('Sync remoto', remote.latestStatus || 'sem dados', remote.lastLatencyMs ? remote.lastLatencyMs + ' ms' : 'latência indisponível'),
+        metricCard('Sessão ativa', remote.activeSessionId ? remote.activeSessionId.slice(0, 8) : 'nenhuma', remote.activeRequestType || 'sem pedido ativo'),
+        metricCard('Capacidade stream', remote.streamCapability?.status || 'sem sinal', remote.streamCapability?.context?.reason || remote.streamCapability?.context?.error || '—')
+      ].join('');
+
+      badge.textContent = remote.latestStatus || 'Sem dados';
+      badge.className = 'badge ' + (remote.latestStatus === 'ok' ? 'badge-success' : 'badge-muted');
+      notes.innerHTML = `
+        <div>Última sincronização remota: ${remote.latestSyncAt ? new Date(remote.latestSyncAt).toLocaleString() : '—'}.</div>
+        <div>Último upload de media: ${media.latestUploadAt ? new Date(media.latestUploadAt).toLocaleString() : '—'}.</div>
+        <div>${remote.streamCapability?.context?.reason === 'screen_capture_requires_foreground_user_grant' ? 'A captura de ecrã ainda requer um passo adicional de consentimento foreground no Android; por isso o streaming live completo depende da autorização MediaProjection no aparelho.' : 'O pipeline remoto está a publicar eventos de sincronização e stream para diagnóstico.'}</div>
+      `;
+    }
+
+    async function refreshPaymentStatus(id) {
+      const res = await apiFetch('/api/payments/' + encodeURIComponent(id) + '/refresh-status', { method:'POST', body:{} });
+      if (!res.ok) {
+        alert('Erro ao atualizar estado: ' + (res.error || JSON.stringify(res)));
+        return;
+      }
+      await loadProfile();
+      await loadMyPayments();
+    }
+
+    async function loadMyPayments() {
+      const r = await apiFetch('/api/payments/mine', { method:'GET' });
+      const tbody = document.querySelector('#myPayments tbody');
+      tbody.innerHTML = '';
+      if (!r.ok) {
+        tbody.innerHTML = '<tr><td colspan="8">Erro: ' + (r.error || JSON.stringify(r)) + '</td></tr>';
+        return;
+      }
+
+      (r.payments || []).forEach(p => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${p._id}</td>
+          <td>${p.phoneMsisdn || '—'}</td>
+          <td>${p.amount || ''} ${p.currency || ''}</td>
+          <td>${p.status}</td>
+          <td>${p.providerStatus || '—'}</td>
+          <td>${p.debitoReference || '—'}</td>
+          <td>${p.statusCheckedAt ? new Date(p.statusCheckedAt).toLocaleString() : '—'}</td>
+          <td>${p.refreshable ? `<button class="btnRefreshPayment" data-id="${p._id}">Atualizar estado</button>` : '—'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.querySelectorAll('.btnRefreshPayment').forEach(b => {
+        b.addEventListener('click', () => refreshPaymentStatus(b.getAttribute('data-id')));
+      });
+    }
+
+    document.getElementById('sendMpesaPayment').addEventListener('click', async () => {
+      const msisdn = document.getElementById('mpesaMsisdn').value.trim();
+      const referenceDescription = document.getElementById('mpesaReference').value.trim();
+      const note = document.getElementById('mpesaNote').value.trim();
+      const msgEl = document.getElementById('payMsg');
+      if (!msisdn || !referenceDescription) {
+        msgEl.textContent = 'Preencha MSISDN e descrição.';
+        return;
+      }
+      msgEl.textContent = 'A iniciar pedido M-Pesa...';
+      const res = await apiFetch('/api/payments/mpesa/initiate', { method:'POST', body: { msisdn, referenceDescription, note } });
+      if (!res.ok) {
+        msgEl.textContent = 'Erro ao iniciar M-Pesa: ' + (res.error || JSON.stringify(res.provider || res));
+        return;
+      }
+      const payment = res.payment || {};
+      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}.`;
+      await loadProfile();
+      await loadMyPayments();
     });
 
-    // ---------- init ----------
     (async function(){
       await loadProfile();
       await loadMyDevices();
       await loadMyPayments();
     })();
-
   </script>
 </body>
 </html>

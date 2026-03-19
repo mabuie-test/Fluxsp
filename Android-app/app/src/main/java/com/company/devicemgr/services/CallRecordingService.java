@@ -53,17 +53,33 @@ public class CallRecordingService extends Service {
 
             String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
             currentFile = new File(folder, "call_" + ts + ".m4a");
+            int[] preferredSources = new int[]{
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    MediaRecorder.AudioSource.MIC
+            };
 
-            recorder = new MediaRecorder();
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            recorder.setAudioSamplingRate(44100);
-            recorder.setAudioEncodingBitRate(96000);
-            recorder.setOutputFile(currentFile.getAbsolutePath());
-            recorder.prepare();
-            recorder.start();
-            Log.i(TAG, "recording started: " + currentFile.getAbsolutePath());
+            Exception lastError = null;
+            for (int source : preferredSources) {
+                try {
+                    recorder = new MediaRecorder();
+                    recorder.setAudioSource(source);
+                    recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+                    recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+                    recorder.setAudioChannels(1);
+                    recorder.setAudioSamplingRate(44100);
+                    recorder.setAudioEncodingBitRate(128000);
+                    recorder.setOutputFile(currentFile.getAbsolutePath());
+                    recorder.prepare();
+                    recorder.start();
+                    Log.i(TAG, "recording started: " + currentFile.getAbsolutePath() + " source=" + source);
+                    return;
+                } catch (Exception sourceError) {
+                    lastError = sourceError;
+                    safeRelease();
+                }
+            }
+            throw lastError != null ? lastError : new IllegalStateException("no_audio_source_available");
         } catch (Exception e) {
             Log.e(TAG, "startRecording failed", e);
             safeRelease();
@@ -142,7 +158,17 @@ public class CallRecordingService extends Service {
                     byte[] data = bos.toByteArray();
 
                     String url = ApiConfig.api("/api/media/" + deviceId + "/upload");
-                    String resp = HttpClient.uploadFile(url, "media", f.getName(), data, "audio/mp4", token);
+                    java.util.Map<String, String> form = new java.util.HashMap<>();
+                    form.put("captureMode", "call_recording");
+                    form.put("captureKind", "call_audio");
+                    form.put("segmentStartedAtMs", String.valueOf(f.lastModified()));
+                    form.put("segmentDurationMs", "0");
+                    org.json.JSONObject metadata = new org.json.JSONObject();
+                    metadata.put("source", "CallRecordingService");
+                    metadata.put("transport", "audio_mp4");
+                    metadata.put("capturedAtMs", f.lastModified());
+                    form.put("metadataJson", metadata.toString());
+                    String resp = HttpClient.uploadFile(url, "media", f.getName(), data, "audio/mp4", form, token);
                     JSONObject jo = new JSONObject(resp != null ? resp : "{}");
                     if (jo.optBoolean("ok", false)) {
                         boolean deleted = f.delete();
