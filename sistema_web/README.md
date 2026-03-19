@@ -65,3 +65,22 @@ composer require phpmailer/phpmailer
 - Endpoint de health check: `GET /api/health`.
 - Validação de acesso por owner/admin para endpoints sensíveis de device, telemetry e media.
 - Operação de processamento de pagamentos com transação no banco.
+
+
+## Novo fluxo de alocação e subscrição
+- O aparelho é alocado automaticamente ao utilizador autenticado via `POST /api/devices/auto-assign` usando **IMEI** (sem reivindicação manual).
+- O IMEI é único no sistema para impedir duplicação do mesmo aparelho.
+- A plataforma guarda e exibe metadados: **modelo, rede, operadora, nível de bateria, nível de sinal, estado online e última vez online**.
+- O acesso aos dados de telemetria/media para utilizadores normais é liberado apenas com subscrição ativa por aparelho.
+
+## Pagamento M-Pesa automático
+- Endpoint: `POST /api/payments/mpesa/checkout`
+- Valor fixo por aparelho: **800 MZN / 30 dias**
+- Campos esperados no body JSON:
+  - `deviceId`
+  - `msisdn`
+- Em aprovação automática, a subscrição do aparelho é estendida por 30 dias.
+
+## Administração robusta
+- Novo endpoint para painel admin: `GET /api/admin/overview`
+- Retorna: total de utilizadores/aparelhos, online, subscrições ativas, receita mensal e lista de subscrições a expirar.

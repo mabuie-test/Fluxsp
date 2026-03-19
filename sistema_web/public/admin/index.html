@@ -1,167 +1,70 @@
- <!doctype html>
+<!doctype html>
 <html>
 <head>
-  <meta charset="utf-8"/><title>Admin Dashboard</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta charset="utf-8"/>
+  <title>Admin</title>
   <link rel="stylesheet" href="/css/styles.css">
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
-  <div class="container">
-    <header style="display:flex;justify-content:space-between;align-items:center">
-      <h1>Admin Dashboard</h1>
-      <div>
-        <button id="btnRefresh">Refresh</button>
-        <button id="logout">Logout</button>
-      </div>
-    </header>
+<div class="container">
+  <header style="display:flex;justify-content:space-between;align-items:center">
+    <h1>Painel Administrativo</h1>
+    <div><button id="refresh">Atualizar</button> <button id="logout">Logout</button></div>
+  </header>
 
-    <section class="card">
-      <h2>Devices</h2>
-      <input id="deviceSearch" placeholder="Procurar DeviceId, nome ou owner"/>
-      <table id="devicesTable" style="width:100%;border-collapse:collapse;margin-top:8px">
-        <thead>
-          <tr><th>DeviceId</th><th>Name</th><th>Owner</th><th>Last Seen</th><th>Ações</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-
-    <section class="card" style="margin-top:16px">
-      <h2>Payments</h2>
-      <table id="paymentsTable" style="width:100%;border-collapse:collapse;margin-top:8px">
-        <thead>
-          <tr><th>ID</th><th>User</th><th>Amount</th><th>Status</th><th>Created</th><th>Ações</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
+  <div class="grid">
+    <div class="card"><h3>Resumo</h3><div id="summary">Carregando...</div></div>
+    <div class="card"><h3>Subscrições a expirar</h3><ul id="expiring"></ul></div>
   </div>
 
-  <script src="/js/api.js"></script>
-  <script>
-    const token = localStorage.getItem('auth_token');
-    if (!token) { alert('not logged'); location.href='/'; }
+  <div class="card">
+    <h3>Aparelhos</h3>
+    <table id="devices"><thead><tr><th>DeviceId</th><th>IMEI</th><th>Modelo</th><th>Dono</th><th>Online</th><th>Subscrição</th></tr></thead><tbody></tbody></table>
+  </div>
 
-    async function loadDevices() {
-      const res = await apiFetch('/api/devices', { method:'GET' });
-      const tbody = document.querySelector('#devicesTable tbody');
-      tbody.innerHTML = '';
-      if (!res.ok) { tbody.innerHTML = '<tr><td colspan="5">Erro: ' + (res.error||JSON.stringify(res)) + '</td></tr>'; return; }
-      res.devices.forEach(d => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td style="padding:6px;border-bottom:1px solid #eee">${d.deviceId}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">${d.name || ''}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">${d.owner || ''}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">
-            <button data-id="${d.deviceId}" class="btnView">Ver</button>
-          </td>
-        `;
-        tbody.appendChild(tr);
-      });
+  <div class="card">
+    <h3>Pagamentos</h3>
+    <table id="payments"><thead><tr><th>ID</th><th>User</th><th>Device</th><th>Montante</th><th>Método</th><th>Status</th><th>Ações</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script>
+if (!localStorage.getItem('auth_token')) location.href='/';
+document.getElementById('logout').addEventListener('click', ()=>{localStorage.clear();location.href='/';});
 
-      // attach handlers
-      // assume contexto: no admin -> leva para /admin/device.html, no user -> /user/device.html
-document.querySelectorAll('.btnView').forEach(b => {
-  b.addEventListener('click', () => {
-    const id = b.getAttribute('data-id');
-    // detecta se estamos no admin ou user pela URL atual
-    const path = window.location.pathname;
-    if (path.indexOf('/admin/') === 0 || path.indexOf('/admin') === 0) {
-      window.location = '/admin/device.html?deviceId=' + encodeURIComponent(id);
-    } else {
-      window.location = '/user/device.html?deviceId=' + encodeURIComponent(id);
-    }
-  });
-});
+async function loadOverview(){
+  const r = await apiFetch('/api/admin/overview', { method:'GET' });
+  if (!r.ok) { document.getElementById('summary').innerText='Erro'; return; }
+  const s = r.summary;
+  document.getElementById('summary').innerHTML = `<div>Utilizadores: ${s.users}</div><div>Aparelhos: ${s.devices}</div><div>Online: ${s.onlineDevices}</div><div>Subscrições ativas: ${s.activeSubscriptions}</div><div>Receita (30d): ${s.monthlyRevenueMzn} MZN</div>`;
+  const ul=document.getElementById('expiring'); ul.innerHTML='';
+  r.expiringSoon.forEach(x=>{ const li=document.createElement('li'); li.textContent=`${x.device_id} (${x.model||'-'}) até ${new Date(x.subscription_until).toLocaleString()}`; ul.appendChild(li); });
+}
 
-    }
+async function loadDevices(){
+  const r = await apiFetch('/api/devices', { method:'GET' });
+  const tb=document.querySelector('#devices tbody'); tb.innerHTML='';
+  if (!r.ok) return;
+  r.devices.forEach(d=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${d.deviceId}</td><td>${d.imei||'-'}</td><td>${d.model||'-'}</td><td>${d.ownerUserId||'-'}</td><td>${d.isOnline?'Online':'Offline'}</td><td>${d.subscriptionStatus} ${d.subscriptionUntil?('até '+new Date(d.subscriptionUntil).toLocaleDateString()):''}</td>`; tb.appendChild(tr); });
+}
 
-    async function loadPayments() {
-      const res = await apiFetch('/api/payments', { method:'GET' });
-      const tbody = document.querySelector('#paymentsTable tbody');
-      tbody.innerHTML = '';
-      if (!res.ok) { tbody.innerHTML = '<tr><td colspan="6">Erro: ' + (res.error||JSON.stringify(res)) + '</td></tr>'; return; }
-      res.payments.forEach(p => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td style="padding:6px;border-bottom:1px solid #eee">${p._id}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">${(p.user && (p.user.email || p.user)) || ''}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">${p.amount || ''} ${p.currency || ''}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">${p.status}</td>
-          <td style="padding:6px;border-bottom:1px solid #eee">${new Date(p.createdAt).toLocaleString()}</td>
-          // dentro de res.payments.forEach(p => { ... })
-<td style="padding:6px;border-bottom:1px solid #eee">
-  ${p.status === 'pending' ? `<button data-id="${p._id}" class="btnApprove">Aprovar</button><button data-id="${p._id}" class="btnReject">Rejeitar</button>` : '-'}
-  ${p.mediaFileId ? `<button class="btnViewMedia" data-fileid="${p.mediaFileId}">Ver comprovativo</button>` : ''}
-</td>
+async function processPayment(id,action){
+  const r=await apiFetch('/api/payments/'+id+'/process',{method:'POST',body:{action}});
+  if(!r.ok) alert('Falha: '+(r.error||''));
+  await loadPayments(); await loadOverview(); await loadDevices();
+}
 
-        `;
-        tbody.appendChild(tr);
-      });
+async function loadPayments(){
+  const r = await apiFetch('/api/payments', { method:'GET' });
+  const tb=document.querySelector('#payments tbody'); tb.innerHTML='';
+  if (!r.ok) return;
+  r.payments.forEach(p=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${p.id}</td><td>${p.email||'-'}</td><td>${p.device_id||'-'}</td><td>${p.amount||'-'} ${p.currency||''}</td><td>${p.method||'-'}</td><td>${p.status}</td><td><button data-a="approve" data-id="${p.id}">Aprovar</button> <button data-a="reject" data-id="${p.id}">Rejeitar</button></td>`; tb.appendChild(tr); });
+  tb.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>processPayment(b.dataset.id,b.dataset.a)));
+}
 
-      document.querySelectorAll('.btnApprove').forEach(b => {
-        b.addEventListener('click', async () => {
-          if (!confirm('Aprovar pagamento?')) return;
-          const id = b.getAttribute('data-id');
-          const res = await apiFetch('/api/payments/' + encodeURIComponent(id) + '/process', { method:'POST', body: { action:'approve' } });
-          if (res.ok) { alert('Aprovado'); loadPayments(); }
-          else alert('Erro: ' + (res.error || JSON.stringify(res)));
-        });
-      });
-
-      document.querySelectorAll('.btnReject').forEach(b => {
-        b.addEventListener('click', async () => {
-          if (!confirm('Rejeitar pagamento?')) return;
-          const id = b.getAttribute('data-id');
-          const res = await apiFetch('/api/payments/' + encodeURIComponent(id) + '/process', { method:'POST', body: { action:'reject' } });
-          if (res.ok) { alert('Rejeitado'); loadPayments(); }
-          else alert('Erro: ' + (res.error || JSON.stringify(res)));
-        });
-      });
-document.querySelectorAll('.btnViewMedia').forEach(b => {
-  b.addEventListener('click', async () => {
-    const fileId = b.getAttribute('data-fileid');
-    try {
-      const res = await fetch('/api/media/download/' + encodeURIComponent(fileId), {
-        headers: { 'Authorization': 'Bearer ' + token }
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        alert('Erro ao descarregar: ' + txt);
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      // abre numa nova janela/aba
-      window.open(url, '_blank');
-      // opcional: revoke depois de meia hora
-      setTimeout(() => URL.revokeObjectURL(url), 30*60*1000);
-    } catch (err) {
-      alert('Erro: ' + err.message);
-    }
-  });
-});
-    }
-
-    document.getElementById('btnRefresh').addEventListener('click', () => { loadDevices(); loadPayments(); });
-    document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
-
-    // quick search
-    document.getElementById('deviceSearch').addEventListener('input', (e) => {
-      const q = (e.target.value || '').toLowerCase();
-      document.querySelectorAll('#devicesTable tbody tr').forEach(tr => {
-        const txt = tr.innerText.toLowerCase();
-        tr.style.display = txt.indexOf(q) !== -1 ? '' : 'none';
-      });
-    });
-
-    loadDevices();
-    loadPayments();
-
-  </script>
+async function loadAll(){ await loadOverview(); await loadDevices(); await loadPayments(); }
+document.getElementById('refresh').addEventListener('click', loadAll);
+loadAll();
+</script>
 </body>
-      </html>
-          
+</html>

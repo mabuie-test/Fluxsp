@@ -38,7 +38,16 @@ function ensure_schema(): void {
     if ($done) return;
     try {
         $sql = file_get_contents(__DIR__ . '/schema.sql');
-        db()->exec($sql);
+        $statements = array_filter(array_map('trim', explode(';', (string)$sql)));
+        foreach ($statements as $stmt) {
+            if ($stmt === '') continue;
+            try {
+                db()->exec($stmt);
+            } catch (Throwable $e) {
+                // Ignora erros de migração repetida/compatibilidade para manter idempotência.
+                continue;
+            }
+        }
     } catch (Throwable $e) {
         json_response(['ok' => false, 'error' => 'db_unavailable'], 503);
     }
