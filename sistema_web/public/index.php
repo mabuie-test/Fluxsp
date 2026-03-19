@@ -238,6 +238,27 @@ try {
         json_response(['ok' => true, 'devices' => $st->fetchAll()]);
     }
 
+    if ($method === 'POST' && $uri === '/api/devices/auto-assign') {
+        $u = auth_user();
+        $deviceId = trim((string)($body['deviceId'] ?? ''));
+        if ($deviceId === '') json_response(['ok' => false, 'error' => 'missing_device'], 400);
+
+        $d = find_device($deviceId);
+        if ($d) {
+            if (!empty($d['owner_user_id']) && (string)$d['owner_user_id'] !== (string)$u['id']) {
+                json_response(['ok' => false, 'error' => 'already_claimed'], 403);
+            }
+            $up = db()->prepare('UPDATE devices SET owner_user_id = ?, last_seen = COALESCE(last_seen, NOW()) WHERE device_id = ?');
+            $up->execute([$u['id'], $deviceId]);
+        } else {
+            $ins = db()->prepare('INSERT INTO devices(device_id, owner_user_id, last_seen) VALUES(?,?,NOW())');
+            $ins->execute([$deviceId, $u['id']]);
+        }
+
+        $device = find_device($deviceId);
+        json_response(['ok' => true, 'device' => $device]);
+    }
+
     if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId', $uri))) {
         $u = auth_user();
         $d = find_device($m['deviceId']);

@@ -42,3 +42,8 @@ composer require phpmailer/phpmailer
 - Endpoint de health check: `GET /api/health`.
 - Validação de acesso por owner/admin para endpoints sensíveis de device, telemetry e media.
 - Operação de processamento de pagamentos com transação no banco.
+
+## Associação automática do dispositivo
+- A app Android faz associação automática do `deviceId` ao utilizador no login via `POST /api/devices/auto-assign`.
+- O painel web deixa de depender de reivindicação manual do aparelho.
+- A app usa um identificador estável do Android para evitar que o mesmo aparelho seja adicionado várias vezes.

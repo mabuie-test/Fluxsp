@@ -10,11 +10,11 @@ import android.widget.EditText;
 import android.widget.Toast;
 
 import com.company.devicemgr.utils.AppRuntime;
+import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.HttpClient;
 
 import org.json.JSONObject;
 
-import java.util.UUID;
 
 public class LoginActivity extends Activity {
     EditText etEmail, etPassword;
@@ -66,9 +66,19 @@ public class LoginActivity extends Activity {
                             SharedPreferences sp1 = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
                             String deviceId = sp1.getString("deviceId", null);
                             if (deviceId == null || deviceId.length() == 0) {
-                                deviceId = UUID.randomUUID().toString();
+                                deviceId = DeviceIdentity.getStableDeviceId(LoginActivity.this);
                                 sp1.edit().putString("deviceId", deviceId).apply();
                             }
+
+                            try {
+                                JSONObject assignBody = new JSONObject();
+                                assignBody.put("deviceId", deviceId);
+                                String assignUrl = com.company.devicemgr.utils.ApiConfig.api("/api/devices/auto-assign");
+                                HttpClient.postJson(assignUrl, assignBody.toString(), token1);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+
                             sp1.edit().putString("auth_token", token1).putString("userId", userId).putString("role", role).apply();
 
                             runOnUiThread(() -> {

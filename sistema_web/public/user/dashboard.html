@@ -32,12 +32,7 @@
       <div class="card">
         <h3>Devices</h3>
 
-        <div class="card" style="margin-bottom:12px">
-          <h4>Reivindicar dispositivo</h4>
-          <label>DeviceId: <input id="claimDeviceId" placeholder="Cole o DeviceId aqui" /></label>
-          <button id="btnClaim">Reivindicar</button>
-          <p id="claimMsg" class="small"></p>
-        </div>
+        <p class="small">O dispositivo da app é associado automaticamente no login. Já não é necessário reivindicar manualmente.</p>
 
         <div style="margin-bottom:8px">
           <a id="linkMap" href="#" >Ver Mapa</a> |
@@ -151,21 +146,6 @@
         });
       });
     }
-
-    // ---------- claim ----------
-    document.getElementById('btnClaim').addEventListener('click', async () => {
-      const id = document.getElementById('claimDeviceId').value.trim();
-      if (!id) { document.getElementById('claimMsg').innerText = 'Insere deviceId'; return; }
-      document.getElementById('claimMsg').innerText = 'A reivindicar...';
-      const res = await apiFetch('/api/devices/' + encodeURIComponent(id) + '/claim', { method: 'POST' });
-      if (res.ok) {
-        document.getElementById('claimMsg').innerText = 'Device reivindicado com sucesso.';
-        document.getElementById('claimDeviceId').value = '';
-        await loadMyDevices();
-      } else {
-        document.getElementById('claimMsg').innerText = 'Erro: ' + (res.error || JSON.stringify(res));
-      }
-    });
 
     // ---------- payments ----------
     async function loadMyPayments() {
