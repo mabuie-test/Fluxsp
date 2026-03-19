@@ -23,22 +23,17 @@
     <div class="card" id="deviceInfo">Loading device...</div>
     <div class="card">
       <h3>Sessões de suporte</h3>
-      <p class="small">O backend apenas solicita a sessão. A app local mostra o pedido, o utilizador aprova manualmente, a sessão expira automaticamente e pode ser parada a qualquer momento.</p>
+      <p class="small">O consentimento de ecrã/áudio é dado uma única vez durante a configuração da app. Com o telemóvel online, o painel web pode iniciar ou parar sessões remotamente, sem aprovação local adicional na app.</p>
       <div class="actions">
         <button id="btnRequestScreen">Solicitar ecrã</button>
         <button id="btnRequestAudio">Solicitar áudio</button>
         <button id="btnStopSession">Parar sessão ativa</button>
+        <button id="btnOpenMedia">Abrir media recebida</button>
       </div>
       <input id="supportNote" placeholder="Motivo/nota para o pedido" />
-      <div class="actions">
-        <label>Prazo resposta (s): <input id="responseTtlSeconds" type="number" min="30" max="600" value="120" /></label>
-        <label>Duração sessão (s): <input id="sessionTtlSeconds" type="number" min="60" max="3600" value="600" /></label>
-      </div>
       <p id="supportMsg" class="small"></p>
       <div id="activeSupport" class="small">A carregar estado...</div>
       <ul id="supportHistory" style="padding-left:20px"></ul>
-      <h4>Eventos da última sessão</h4>
-      <ul id="supportEvents" style="padding-left:20px"></ul>
     </div>
     <div id="map" class="card"></div>
     <div class="card">
@@ -62,7 +57,10 @@
       el.innerHTML = `<strong>DeviceId:</strong> ${d.deviceId} <br>
                       <strong>Name:</strong> ${d.name || '-'} <br>
                       <strong>Owner:</strong> ${d.owner || '-'} <br>
-                      <strong>Last seen:</strong> ${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'}`;
+                      <strong>Last seen:</strong> ${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'} <br>
+                      <strong>Online:</strong> ${d.isOnline ? 'Sim' : 'Não'} <br>
+                      <strong>Consentimento remoto:</strong> ${d.consentAccepted ? 'OK' : 'Pendente'} <br>
+                      <strong>Pronto para suporte:</strong> ${d.supportReady ? 'Sim' : 'Não'}`;
     }
 
     async function loadHistory(){
@@ -80,22 +78,20 @@
     }
 
     async function requestSupport(requestType) {
-      const responseTtlSeconds = Number(document.getElementById('responseTtlSeconds').value || 120);
-      const sessionTtlSeconds = Number(document.getElementById('sessionTtlSeconds').value || 600);
       const note = document.getElementById('supportNote').value.trim();
       const res = await apiFetch('/api/support-sessions/request', {
         method:'POST',
         body: {
           deviceId,
           requestType,
-          responseTtlSeconds,
-          sessionTtlSeconds,
           note
         }
       });
-      document.getElementById('supportMsg').textContent = res.ok
-        ? 'Pedido criado com sucesso.'
-        : 'Erro ao criar pedido: ' + (res.error || JSON.stringify(res));
+      let msg = 'Sessão iniciada com sucesso.';
+      if (!res.ok && res.error === 'device_offline') msg = 'O dispositivo está offline e não pode iniciar suporte remoto agora.';
+      else if (!res.ok && res.error === 'consent_required') msg = 'O dispositivo ainda não deu o consentimento remoto de ecrã/áudio.';
+      else if (!res.ok) msg = 'Erro ao iniciar sessão: ' + (res.error || JSON.stringify(res));
+      document.getElementById('supportMsg').textContent = msg;
       await loadSupportState();
     }
 
@@ -106,21 +102,6 @@
         ? 'Sessão parada.'
         : 'Erro ao parar sessão: ' + (res.error || JSON.stringify(res));
       await loadSupportState();
-    }
-
-    async function loadSupportEvents(sessionId) {
-      const ul = document.getElementById('supportEvents');
-      ul.innerHTML = '';
-      if (!sessionId) { ul.innerHTML = '<li>Sem eventos.</li>'; return; }
-      const res = await apiFetch('/api/support-sessions/' + encodeURIComponent(sessionId) + '/events', { method:'GET' });
-      const events = res.ok ? res.events : [];
-      events.forEach(event => {
-        const li = document.createElement('li');
-        const metadata = Object.keys(event.metadata || {}).length ? ' — ' + JSON.stringify(event.metadata) : '';
-        li.textContent = `${new Date(event.createdAt).toLocaleString()} — ${event.eventType}${metadata}`;
-        ul.appendChild(li);
-      });
-      if (!events.length) ul.innerHTML = '<li>Sem eventos.</li>';
     }
 
     function renderSupportHistory(sessions) {
@@ -144,7 +125,7 @@
 
       if (activeRes.ok && activeRes.session) {
         const s = activeRes.session;
-        activeEl.textContent = `Sessão ativa: ${s.requestType} até ${new Date(s.sessionExpiresAt).toLocaleString()}.`;
+        activeEl.textContent = `Sessão ativa: ${s.requestType}.`;
         stopBtn.disabled = false;
         stopBtn.onclick = () => stopSupportSession(s.sessionId);
       } else {
@@ -154,7 +135,6 @@
 
       const sessions = listRes.ok ? listRes.sessions : [];
       renderSupportHistory(sessions);
-      await loadSupportEvents((activeRes.ok && activeRes.session ? activeRes.session.sessionId : (sessions[0] && sessions[0].sessionId)));
     }
 
     let map, marker;
@@ -172,6 +152,7 @@
     (async function(){
       document.getElementById('btnRequestScreen').addEventListener('click', () => requestSupport('screen'));
       document.getElementById('btnRequestAudio').addEventListener('click', () => requestSupport('ambient_audio'));
+      document.getElementById('btnOpenMedia').addEventListener('click', () => location.href='/admin/media.html?deviceId=' + encodeURIComponent(deviceId));
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
       await loadDevice();

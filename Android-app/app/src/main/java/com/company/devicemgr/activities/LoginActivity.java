@@ -33,7 +33,6 @@ public class LoginActivity extends Activity {
         String token = sp.getString("auth_token", null);
         if (token != null && token.length() > 10) {
             AppRuntime.ensureTelemetryStarted(this);
-            AppRuntime.syncSupportSessionIndicator(this);
             startActivity(new Intent(LoginActivity.this, MainPermissionsActivity.class));
             finish();
             return;
@@ -86,7 +85,6 @@ public class LoginActivity extends Activity {
                                 Toast.makeText(LoginActivity.this, "Login OK", Toast.LENGTH_SHORT).show();
                                 try {
                                     AppRuntime.ensureTelemetryStarted(LoginActivity.this);
-                                    AppRuntime.syncSupportSessionIndicator(LoginActivity.this);
                                 } catch (Exception e) {
                                     e.printStackTrace();
                                 }

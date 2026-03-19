@@ -16,12 +16,13 @@ android:layout_width="match_parent" android:layout_height="wrap_content">
 
 <View android:layout_height="10dp" android:layout_width="match_parent"/>
 
-<Button android:id="@+id/btnStartService" android:text="Iniciar Envio de Dados" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnGrantSupportConsent" android:text="Autorizar ecrã/áudio uma vez" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnStartService" android:text="Concluir configuração" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 
 <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Status: -" android:paddingTop="12dp"/>
 <TextView android:id="@+id/tvDeviceId" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="DeviceId: -" android:paddingTop="6dp"/>
-<TextView android:id="@+id/tvSupportSessionStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sessão de suporte: nenhuma" android:paddingTop="6dp"/>
-<Button android:id="@+id/btnStopSupportSession" android:text="Parar sessão de suporte ativa" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<TextView android:id="@+id/tvSupportConsentStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Consentimento remoto: pendente" android:paddingTop="6dp"/>
+<TextView android:id="@+id/tvRemoteSupportState" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sessão remota: inativa" android:paddingTop="6dp"/>
 
 <View android:layout_height="20dp" android:layout_width="match_parent"/>
 <TextView android:text="Enviar ficheiros" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />

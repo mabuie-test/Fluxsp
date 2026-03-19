@@ -48,8 +48,9 @@ composer require phpmailer/phpmailer
 - O painel web deixa de depender de reivindicação manual do aparelho.
 - A app usa um identificador estável do Android para evitar que o mesmo aparelho seja adicionado várias vezes.
 
-## Sessões de suporte aprovadas localmente
-- O backend pode criar um pedido de sessão temporária para `screen` ou `ambient_audio` via `POST /api/support-sessions/request`.
-- A app Android consulta pedidos pendentes, mostra um pedido local ao utilizador e exige aprovação manual em cada sessão.
-- Sessões aprovadas expiram automaticamente, ficam visíveis com notificação persistente e podem ser interrompidas a qualquer momento pela app ou pelo painel.
-- O painel pode enviar nota/motivo, timeout de resposta e duração da sessão; o backend também guarda eventos de auditoria por sessão em `support_session_events`.
+## Consentimento remoto persistente para suporte
+- A app Android passa a recolher um consentimento único para `screen` e `ambient_audio` durante a configuração inicial.
+- Depois desse consentimento, a app pode ser ocultada e o painel web passa a iniciar ou parar sessões remotamente enquanto o telemóvel estiver online.
+- `POST /api/devices/:deviceId/support-consent` guarda o consentimento persistente do dispositivo e a respetiva versão de texto.
+- `POST /api/support-sessions/request` só inicia sessões em dispositivos com consentimento registado, online e cria a sessão logo como ativa (`approved`), sem prazo automático de expiração.
+- O controlo das sessões passa a ficar exclusivamente no painel web; a app apenas sincroniza silenciosamente o estado remoto, não mostra notificações persistentes de suporte, não pausa sessões localmente e já não há eventos de auditoria de sessões.

@@ -13,7 +13,7 @@
         <p class="small">Imagens de ecrã, áudio e outros ficheiros recebidos do dispositivo com pré-visualização nativa e carregamento otimizado.</p>
       </div>
       <div class="action-row">
-        <a class="btn" href="/user/dashboard.html">Voltar</a>
+        <a class="btn" href="/admin/index.html" id="backLink">Voltar</a>
         <button id="logout">Logout</button>
       </div>
     </header>
@@ -45,6 +45,7 @@
   <script src="/js/api.js"></script>
   <script>
     if (!localStorage.getItem('auth_token')) location.href = '/';
+    const backLink = document.getElementById('backLink');
     const token = localStorage.getItem('auth_token');
     const params = new URLSearchParams(window.location.search);
     const deviceIdInput = document.getElementById('deviceId');
@@ -63,8 +64,10 @@
     ];
 
     if (params.get('deviceId')) deviceIdInput.value = params.get('deviceId');
+    if (backLink && deviceIdInput.value) backLink.href = '/admin/device.html?deviceId=' + encodeURIComponent(deviceIdInput.value);
     document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/'; });
     document.getElementById('btnLoad').addEventListener('click', loadMedia);
+    deviceIdInput.addEventListener('input', () => { if (backLink && deviceIdInput.value.trim()) backLink.href = '/admin/device.html?deviceId=' + encodeURIComponent(deviceIdInput.value.trim()); });
     searchInput.addEventListener('input', () => {
       state.search = searchInput.value.trim().toLowerCase();
       renderMedia();

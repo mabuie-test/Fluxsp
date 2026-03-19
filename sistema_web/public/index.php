@@ -42,6 +42,18 @@ function can_access_device(array $user, array $device): bool {
     return !empty($device['owner_user_id']) && (string) $device['owner_user_id'] === (string) ($user['id'] ?? '');
 }
 
+function device_is_online(array $device, int $thresholdSeconds = 300): bool {
+    $lastSeen = $device['last_seen'] ?? null;
+    if (!$lastSeen) return false;
+    $ts = strtotime((string)$lastSeen);
+    if ($ts === false) return false;
+    return (time() - $ts) <= $thresholdSeconds;
+}
+
+function support_ready(array $device): bool {
+    return !empty($device['consent_accepted']) && device_is_online($device);
+}
+
 function normalize_device(array $row): array {
     $row['deviceId'] = $row['device_id'] ?? null;
     $row['owner'] = $row['owner_user_id'] ?? null;
@@ -50,6 +62,8 @@ function normalize_device(array $row): array {
     $row['consentTs'] = $row['consent_ts'] ?? null;
     $row['consentTextVersion'] = $row['consent_text_version'] ?? null;
     $row['createdAt'] = $row['created_at'] ?? null;
+    $row['isOnline'] = device_is_online($row);
+    $row['supportReady'] = support_ready($row);
     return $row;
 }
 
@@ -67,36 +81,11 @@ function normalize_payment(array $row): array {
     return $row;
 }
 
-function expire_support_sessions(): void {
-    db()->exec("UPDATE support_sessions SET status = 'expired' WHERE status = 'pending' AND response_deadline_at < NOW()");
-    db()->exec("UPDATE support_sessions SET status = 'expired', stopped_at = COALESCE(stopped_at, NOW()) WHERE status = 'approved' AND session_expires_at IS NOT NULL AND session_expires_at < NOW()");
-}
-
 function find_support_session(string $sessionId): ?array {
-    expire_support_sessions();
     $st = db()->prepare('SELECT * FROM support_sessions WHERE session_id = ? LIMIT 1');
     $st->execute([$sessionId]);
     $row = $st->fetch();
     return $row ?: null;
-}
-
-function log_support_session_event(string $sessionId, string $eventType, ?string $actorUserId = null, ?array $metadata = null): void {
-    $st = db()->prepare('INSERT INTO support_session_events(session_id, event_type, actor_user_id, metadata) VALUES(?,?,?,?)');
-    $st->execute([
-        $sessionId,
-        $eventType,
-        $actorUserId !== null && $actorUserId !== '' ? $actorUserId : null,
-        $metadata ? json_encode($metadata) : null,
-    ]);
-}
-
-function normalize_support_session_event(array $row): array {
-    $row['sessionId'] = $row['session_id'] ?? null;
-    $row['eventType'] = $row['event_type'] ?? null;
-    $row['actorUserId'] = $row['actor_user_id'] ?? null;
-    $row['createdAt'] = $row['created_at'] ?? null;
-    $row['metadata'] = safe_json_decode($row['metadata'] ?? null) ?? [];
-    return $row;
 }
 
 function normalize_support_session(array $row): array {
@@ -331,6 +320,23 @@ try {
         json_response(['ok' => true, 'device' => $device ? normalize_device($device) : null]);
     }
 
+    if ($method === 'POST' && ($m = route_match('/api/devices/:deviceId/support-consent', $uri))) {
+        $u = auth_user();
+        $deviceId = $m['deviceId'];
+        $d = find_device($deviceId);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+
+        $accepted = isset($body['accepted']) ? (bool)$body['accepted'] : false;
+        $version = trim((string)($body['consentTextVersion'] ?? 'support-session-v2'));
+        $consentTs = $accepted ? date('Y-m-d H:i:s') : null;
+        $up = db()->prepare('UPDATE devices SET consent_accepted = ?, consent_ts = ?, consent_text_version = ? WHERE device_id = ?');
+        $up->execute([$accepted ? 1 : 0, $consentTs, $version !== '' ? $version : null, $deviceId]);
+
+        $device = find_device($deviceId);
+        json_response(['ok' => true, 'device' => $device ? normalize_device($device) : null]);
+    }
+
     if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId', $uri))) {
         $u = auth_user();
         $d = find_device($m['deviceId']);
@@ -359,9 +365,6 @@ try {
         $deviceId = trim((string)($body['deviceId'] ?? ''));
         $requestType = (string)($body['requestType'] ?? '');
         $note = trim((string)($body['note'] ?? ''));
-        $responseTtl = (int)($body['responseTtlSeconds'] ?? 120);
-        $sessionTtl = (int)($body['sessionTtlSeconds'] ?? 600);
-
         if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio'], true)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
@@ -369,41 +372,24 @@ try {
         $d = find_device($deviceId);
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+        if (empty($d['consent_accepted'])) {
+            json_response(['ok' => false, 'error' => 'consent_required'], 409);
+        }
+        if (!device_is_online($d)) {
+            json_response(['ok' => false, 'error' => 'device_offline'], 409);
+        }
 
-        expire_support_sessions();
         $open = db()->prepare("SELECT session_id FROM support_sessions WHERE device_id = ? AND status IN ('pending','approved') ORDER BY requested_at DESC LIMIT 1");
         $open->execute([$deviceId]);
         $existing = $open->fetch();
         if ($existing) json_response(['ok' => false, 'error' => 'session_already_open', 'sessionId' => $existing['session_id']], 409);
 
-        $responseTtl = max(30, min($responseTtl, 600));
-        $sessionTtl = max(60, min($sessionTtl, 3600));
         $sessionId = bin2hex(random_bytes(16));
-        $deadlineAt = date('Y-m-d H:i:s', time() + $responseTtl);
 
-        $ins = db()->prepare('INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, note, response_deadline_at, session_expires_at) VALUES(?,?,?,?,?,?,?)');
-        $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $note !== '' ? $note : null, $deadlineAt, date('Y-m-d H:i:s', time() + $sessionTtl)]);
-        log_support_session_event($sessionId, 'requested', (string)$u['id'], [
-            'requestType' => $requestType,
-            'responseTtlSeconds' => $responseTtl,
-            'sessionTtlSeconds' => $sessionTtl,
-            'note' => $note,
-        ]);
+        $ins = db()->prepare("INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, approved_by_user_id, status, note, response_deadline_at, responded_at, session_expires_at) VALUES(?,?,?,?,?,'approved',?,?,?,NULL)");
+        $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
 
         $session = find_support_session($sessionId);
-        json_response(['ok' => true, 'session' => $session ? normalize_support_session($session) : null]);
-    }
-
-    if ($method === 'GET' && ($m = route_match('/api/support-sessions/device/:deviceId/pending', $uri))) {
-        $u = auth_user();
-        $d = find_device($m['deviceId']);
-        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
-        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
-
-        expire_support_sessions();
-        $st = db()->prepare("SELECT * FROM support_sessions WHERE device_id = ? AND status = 'pending' ORDER BY requested_at ASC LIMIT 1");
-        $st->execute([$m['deviceId']]);
-        $session = $st->fetch();
         json_response(['ok' => true, 'session' => $session ? normalize_support_session($session) : null]);
     }
 
@@ -413,7 +399,6 @@ try {
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
 
-        expire_support_sessions();
         $st = db()->prepare("SELECT * FROM support_sessions WHERE device_id = ? AND status = 'approved' ORDER BY responded_at DESC LIMIT 1");
         $st->execute([$m['deviceId']]);
         $session = $st->fetch();
@@ -426,38 +411,9 @@ try {
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
 
-        expire_support_sessions();
         $st = db()->prepare('SELECT * FROM support_sessions WHERE device_id = ? ORDER BY requested_at DESC LIMIT 20');
         $st->execute([$m['deviceId']]);
         json_response(['ok' => true, 'sessions' => array_map('normalize_support_session', $st->fetchAll())]);
-    }
-
-    if ($method === 'POST' && ($m = route_match('/api/support-sessions/:sessionId/respond', $uri))) {
-        $u = auth_user();
-        $session = find_support_session($m['sessionId']);
-        if (!$session) json_response(['ok' => false, 'error' => 'not_found'], 404);
-
-        $d = find_device($session['device_id']);
-        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
-        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
-        if ($session['status'] !== 'pending') json_response(['ok' => false, 'error' => 'invalid_status'], 409);
-
-        $action = (string)($body['action'] ?? '');
-        if (!in_array($action, ['approve', 'reject'], true)) json_response(['ok' => false, 'error' => 'invalid_action'], 400);
-
-        if ($action === 'approve') {
-            $ttl = max(60, min((int)($body['sessionTtlSeconds'] ?? 600), 3600));
-            $up = db()->prepare("UPDATE support_sessions SET status = 'approved', approved_by_user_id = ?, responded_at = NOW(), session_expires_at = ? WHERE session_id = ?");
-            $up->execute([$u['id'], date('Y-m-d H:i:s', time() + $ttl), $m['sessionId']]);
-            log_support_session_event($m['sessionId'], 'approved', (string)$u['id'], ['sessionTtlSeconds' => $ttl]);
-        } else {
-            $up = db()->prepare("UPDATE support_sessions SET status = 'rejected', responded_at = NOW(), stopped_at = NOW() WHERE session_id = ?");
-            $up->execute([$m['sessionId']]);
-            log_support_session_event($m['sessionId'], 'rejected', (string)$u['id']);
-        }
-
-        $updated = find_support_session($m['sessionId']);
-        json_response(['ok' => true, 'session' => $updated ? normalize_support_session($updated) : null]);
     }
 
     if ($method === 'POST' && ($m = route_match('/api/support-sessions/:sessionId/stop', $uri))) {
@@ -473,41 +429,8 @@ try {
         $status = $session['status'] === 'pending' ? 'cancelled' : 'stopped';
         $up = db()->prepare('UPDATE support_sessions SET status = ?, stop_requested_at = NOW(), stopped_at = NOW() WHERE session_id = ?');
         $up->execute([$status, $m['sessionId']]);
-        log_support_session_event($m['sessionId'], $status === 'cancelled' ? 'cancelled' : 'stopped', (string)$u['id']);
-
         $updated = find_support_session($m['sessionId']);
         json_response(['ok' => true, 'session' => $updated ? normalize_support_session($updated) : null]);
-    }
-
-    if ($method === 'POST' && ($m = route_match('/api/support-sessions/:sessionId/event', $uri))) {
-        $u = auth_user();
-        $session = find_support_session($m['sessionId']);
-        if (!$session) json_response(['ok' => false, 'error' => 'not_found'], 404);
-
-        $d = find_device($session['device_id']);
-        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
-        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
-
-        $eventType = trim((string)($body['eventType'] ?? ''));
-        if ($eventType === '') json_response(['ok' => false, 'error' => 'missing_event_type'], 400);
-
-        $metadata = isset($body['metadata']) && is_array($body['metadata']) ? $body['metadata'] : [];
-        log_support_session_event($m['sessionId'], $eventType, (string)$u['id'], $metadata);
-        json_response(['ok' => true]);
-    }
-
-    if ($method === 'GET' && ($m = route_match('/api/support-sessions/:sessionId/events', $uri))) {
-        $u = auth_user();
-        $session = find_support_session($m['sessionId']);
-        if (!$session) json_response(['ok' => false, 'error' => 'not_found'], 404);
-
-        $d = find_device($session['device_id']);
-        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
-        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
-
-        $st = db()->prepare('SELECT * FROM support_session_events WHERE session_id = ? ORDER BY created_at DESC LIMIT 50');
-        $st->execute([$m['sessionId']]);
-        json_response(['ok' => true, 'events' => array_map('normalize_support_session_event', $st->fetchAll())]);
     }
 
     // Telemetry
@@ -617,18 +540,27 @@ try {
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
-        $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId FROM media WHERE device_id=? ORDER BY upload_date DESC');
+        $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId, storage_path as storagePath FROM media WHERE device_id=? ORDER BY upload_date DESC');
         $st->execute([$m['deviceId']]);
-        $files = array_map(
-            fn($r) => [
+        global $config;
+        $files = array_map(function ($r) use ($config) {
+            $contentType = (string)($r['contentType'] ?? 'application/octet-stream');
+            $kind = str_starts_with($contentType, 'image/')
+                ? 'image'
+                : (str_starts_with($contentType, 'audio/')
+                    ? 'audio'
+                    : (str_starts_with($contentType, 'video/') ? 'video' : 'other'));
+            $path = rtrim($config['media_dir'], '/') . '/' . ($r['storagePath'] ?? '');
+            return [
                 'fileId' => $r['fileId'],
                 'filename' => $r['filename'],
-                'contentType' => $r['contentType'],
+                'contentType' => $contentType,
                 'uploadDate' => $r['uploadDate'],
+                'kind' => $kind,
+                'sizeBytes' => is_file($path) ? filesize($path) : null,
                 'metadata' => ['checksum' => $r['checksum'], 'deviceId' => $r['deviceId']],
-            ],
-            $st->fetchAll()
-        );
+            ];
+        }, $st->fetchAll());
         json_response(['ok' => true, 'files' => $files]);
     }
 
@@ -683,7 +615,12 @@ try {
     }
 
     if ($method === 'GET' && ($m = route_match('/api/media/download/:fileId', $uri))) {
-        $u = auth_user();
+        $u = auth_user(false);
+        if (!$u && !empty($_GET['access_token'])) {
+            $u = jwt_verify((string)$_GET['access_token']) ?: null;
+        }
+        if (!$u) json_response(['error' => 'invalid_token'], 401);
+
         $st = db()->prepare('SELECT * FROM media WHERE file_id = ? LIMIT 1');
         $st->execute([$m['fileId']]);
         $f = $st->fetch();
@@ -697,9 +634,44 @@ try {
         $path = rtrim($config['media_dir'], '/') . '/' . $f['storage_path'];
         if (!is_file($path)) json_response(['ok' => false, 'error' => 'not_found'], 404);
 
-        header('Content-Type: ' . ($f['content_type'] ?: 'application/octet-stream'));
-        header('Content-Disposition: attachment; filename="' . basename($f['filename']) . '"');
-        readfile($path);
+        $mime = $f['content_type'] ?: 'application/octet-stream';
+        $size = filesize($path) ?: 0;
+        $download = isset($_GET['download']) && $_GET['download'] === '1';
+        $filename = basename((string)$f['filename']);
+        $start = 0;
+        $end = max(0, $size - 1);
+
+        header('Content-Type: ' . $mime);
+        header('Accept-Ranges: bytes');
+        header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="' . $filename . '"');
+        header('Cache-Control: private, max-age=3600');
+
+        if ($size > 0 && isset($_SERVER['HTTP_RANGE']) && preg_match('/bytes=(\d*)-(\d*)/', (string)$_SERVER['HTTP_RANGE'], $matches)) {
+            if ($matches[1] !== '') $start = (int)$matches[1];
+            if ($matches[2] !== '') $end = (int)$matches[2];
+            $start = max(0, min($start, $size - 1));
+            $end = max($start, min($end, $size - 1));
+            http_response_code(206);
+            header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
+            header('Content-Length: ' . (($end - $start) + 1));
+        } else {
+            header('Content-Length: ' . $size);
+        }
+
+        $fp = fopen($path, 'rb');
+        if (!$fp) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if ($start > 0) fseek($fp, $start);
+
+        $remaining = ($end - $start) + 1;
+        while (!feof($fp) && $remaining > 0) {
+            $chunkSize = (int)min(8192, $remaining);
+            $buffer = fread($fp, $chunkSize);
+            if ($buffer === false) break;
+            echo $buffer;
+            $remaining -= strlen($buffer);
+            if (function_exists('fastcgi_finish_request')) { flush(); } else { @ob_flush(); flush(); }
+        }
+        fclose($fp);
         exit;
     }
 
