@@ -1,0 +1,9 @@
+{
+  "name": "fluxsp/sistema_web",
+  "description": "Sistema web PHP para gestão de dispositivos",
+  "type": "project",
+  "require": {
+    "php": ">=8.0",
+    "phpmailer/phpmailer": "^6.9"
+  }
+}

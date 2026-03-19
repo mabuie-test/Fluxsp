@@ -35,7 +35,15 @@ mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < app/sc
 php -S 0.0.0.0:3000 -t public
 ```
 
-## Dependência de email (PHPMailer)
+## Dependências PHP (Composer)
+Instale as dependências a partir da pasta `sistema_web`:
+
+```bash
+composer install
+```
+
+Se precisar atualizar ou adicionar manualmente o PHPMailer:
+
 ```bash
 composer require phpmailer/phpmailer
 ```
