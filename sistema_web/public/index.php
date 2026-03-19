@@ -103,6 +103,139 @@ function normalize_support_session(array $row): array {
     return $row;
 }
 
+
+function find_media_record(string $fileId): ?array {
+    $st = db()->prepare('SELECT * FROM media WHERE file_id = ? LIMIT 1');
+    $st->execute([$fileId]);
+    $row = $st->fetch();
+    return $row ?: null;
+}
+
+function find_media_metadata(string $fileId): ?array {
+    $st = db()->prepare('SELECT * FROM media_metadata WHERE file_id = ? LIMIT 1');
+    $st->execute([$fileId]);
+    $row = $st->fetch();
+    return $row ?: null;
+}
+
+function build_media_urls(array $user, string $fileId): array {
+    return [
+        'previewUrl' => '/api/media/download/' . rawurlencode($fileId) . '?media_token=' . rawurlencode(signed_media_token($user, $fileId, false)),
+        'downloadUrl' => '/api/media/download/' . rawurlencode($fileId) . '?download=1&media_token=' . rawurlencode(signed_media_token($user, $fileId, true)),
+    ];
+}
+
+function format_media_row(array $row, array $user): array {
+    global $config;
+    $contentType = (string)($row['contentType'] ?? $row['content_type'] ?? 'application/octet-stream');
+    $kind = str_starts_with($contentType, 'image/')
+        ? 'image'
+        : (str_starts_with($contentType, 'audio/')
+            ? 'audio'
+            : (str_starts_with($contentType, 'video/') ? 'video' : 'other'));
+    $storagePath = (string)($row['storagePath'] ?? $row['storage_path'] ?? '');
+    $path = rtrim($config['media_dir'], '/') . '/' . $storagePath;
+    $meta = find_media_metadata((string)($row['fileId'] ?? $row['file_id'] ?? ''));
+    $metadataJson = safe_json_decode($meta['metadata_json'] ?? null) ?? [];
+    $urls = build_media_urls($user, (string)($row['fileId'] ?? $row['file_id'] ?? ''));
+
+    return [
+        'fileId' => $row['fileId'] ?? $row['file_id'],
+        'filename' => $row['filename'],
+        'contentType' => $contentType,
+        'uploadDate' => $row['uploadDate'] ?? $row['upload_date'],
+        'kind' => $kind,
+        'sizeBytes' => is_file($path) ? filesize($path) : null,
+        'captureMode' => $meta['capture_mode'] ?? null,
+        'captureKind' => $meta['capture_kind'] ?? null,
+        'supportSessionId' => $meta['support_session_id'] ?? null,
+        'segmentStartedAt' => $meta['segment_started_at'] ?? null,
+        'segmentDurationMs' => isset($meta['segment_duration_ms']) ? (int)$meta['segment_duration_ms'] : null,
+        'metadata' => array_merge([
+            'checksum' => $row['checksum'] ?? null,
+            'deviceId' => $row['deviceId'] ?? $row['device_id'] ?? null,
+        ], $metadataJson),
+        'previewUrl' => $urls['previewUrl'],
+        'downloadUrl' => $urls['downloadUrl'],
+    ];
+}
+
+function latest_metric_summary(string $deviceId, string $metricType): ?array {
+    $st = db()->prepare('SELECT * FROM system_metrics WHERE device_id = ? AND metric_type = ? ORDER BY created_at DESC LIMIT 1');
+    $st->execute([$deviceId, $metricType]);
+    $row = $st->fetch();
+    if (!$row) return null;
+    $row['context'] = safe_json_decode($row['context_json'] ?? null) ?? [];
+    return $row;
+}
+
+function device_observability_summary(string $deviceId): array {
+    $summary = [
+        'media' => [
+            'recentUploads' => 0,
+            'avgUploadMs' => null,
+            'failedUploads' => 0,
+            'latestUploadAt' => null,
+            'partialDownloads24h' => 0,
+            'downloadErrors24h' => 0,
+        ],
+        'remoteSync' => [
+            'latestStatus' => null,
+            'latestSyncAt' => null,
+            'lastLatencyMs' => null,
+            'activeSessionId' => null,
+            'activeRequestType' => null,
+            'streamCapability' => null,
+        ],
+    ];
+
+    $st = db()->prepare("SELECT metric_name, status, value_ms, context_json, created_at FROM system_metrics WHERE device_id = ? AND metric_type = 'media_pipeline' AND created_at >= (NOW() - INTERVAL 1 DAY) ORDER BY created_at DESC");
+    $st->execute([$deviceId]);
+    foreach ($st->fetchAll() as $row) {
+        if ($summary['media']['latestUploadAt'] === null && $row['metric_name'] === 'upload') {
+            $summary['media']['latestUploadAt'] = $row['created_at'];
+        }
+        if ($row['metric_name'] === 'upload') {
+            if (($row['status'] ?? '') === 'ok') {
+                $summary['media']['recentUploads']++;
+                if ($row['value_ms'] !== null) {
+                    $summary['media']['avgUploadMs'] = $summary['media']['avgUploadMs'] === null
+                        ? (int)$row['value_ms']
+                        : (int)round(($summary['media']['avgUploadMs'] + (int)$row['value_ms']) / 2);
+                }
+            } else {
+                $summary['media']['failedUploads']++;
+            }
+        }
+        if ($row['metric_name'] === 'download' && ($row['status'] ?? '') === 'partial') {
+            $summary['media']['partialDownloads24h']++;
+        }
+        if ($row['metric_name'] === 'download' && ($row['status'] ?? '') === 'error') {
+            $summary['media']['downloadErrors24h']++;
+        }
+    }
+
+    $sync = latest_metric_summary($deviceId, 'remote_sync');
+    if ($sync) {
+        $summary['remoteSync']['latestStatus'] = $sync['status'] ?? null;
+        $summary['remoteSync']['latestSyncAt'] = $sync['created_at'] ?? null;
+        $summary['remoteSync']['lastLatencyMs'] = isset($sync['value_ms']) ? (int)$sync['value_ms'] : null;
+        $summary['remoteSync']['activeSessionId'] = $sync['context']['activeSessionId'] ?? null;
+        $summary['remoteSync']['activeRequestType'] = $sync['context']['requestType'] ?? null;
+    }
+
+    $cap = latest_metric_summary($deviceId, 'remote_stream');
+    if ($cap) {
+        $summary['remoteSync']['streamCapability'] = [
+            'status' => $cap['status'] ?? null,
+            'updatedAt' => $cap['created_at'] ?? null,
+            'context' => $cap['context'] ?? [],
+        ];
+    }
+
+    return $summary;
+}
+
 if (!str_starts_with($uri, '/api')) {
     $target = $uri === '/' ? '/index.html' : $uri;
     $file = realpath(__DIR__ . $target);
@@ -345,6 +478,15 @@ try {
         json_response(['ok' => true, 'device' => normalize_device($d)]);
     }
 
+
+    if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId/observability', $uri))) {
+        $u = auth_user();
+        $d = find_device($m['deviceId']);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+        json_response(['ok' => true, 'deviceId' => $m['deviceId'], 'observability' => device_observability_summary($m['deviceId'])]);
+    }
+
     if ($method === 'POST' && ($m = route_match('/api/devices/:deviceId/claim', $uri))) {
         $u = auth_user();
         $d = find_device($m['deviceId']);
@@ -402,7 +544,15 @@ try {
         $st = db()->prepare("SELECT * FROM support_sessions WHERE device_id = ? AND status = 'approved' ORDER BY responded_at DESC LIMIT 1");
         $st->execute([$m['deviceId']]);
         $session = $st->fetch();
-        json_response(['ok' => true, 'session' => $session ? normalize_support_session($session) : null]);
+        $normalized = $session ? normalize_support_session($session) : null;
+        if ($normalized) {
+            $normalized['stream'] = [
+                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_chunk' : 'screen_unavailable_background',
+                'pollIntervalMs' => 5000,
+                'segmentDurationMs' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 4000 : null,
+            ];
+        }
+        json_response(['ok' => true, 'session' => $normalized]);
     }
 
     if ($method === 'GET' && ($m = route_match('/api/support-sessions/device/:deviceId/list', $uri))) {
@@ -442,6 +592,20 @@ try {
         $ts = date('Y-m-d H:i:s');
         $ins = db()->prepare('INSERT INTO telemetry(device_id, payload, ts) VALUES(?,?,?)');
         $ins->execute([$deviceId, json_encode($payload), $ts]);
+
+        $eventType = $payload['type'] ?? null;
+        $eventPayload = is_array($payload['payload'] ?? null) ? $payload['payload'] : [];
+        if ($eventType === 'metric') {
+            record_metric(
+                $deviceId,
+                (string)($eventPayload['metricType'] ?? 'device'),
+                (string)($eventPayload['metricName'] ?? 'unknown'),
+                isset($eventPayload['status']) ? (string)$eventPayload['status'] : null,
+                $eventPayload['valueMs'] ?? null,
+                $eventPayload['valueNum'] ?? null,
+                $eventPayload['context'] ?? []
+            );
+        }
 
         $up = db()->prepare('INSERT INTO devices(device_id, last_seen) VALUES(?,?) ON DUPLICATE KEY UPDATE last_seen=VALUES(last_seen)');
         $up->execute([$deviceId, $ts]);
@@ -533,6 +697,16 @@ try {
         json_response(['ok' => true]);
     }
 
+
+    if ($method === 'POST' && $uri === '/api/media/payment/upload') {
+        $u = auth_user();
+        $virtualDeviceId = '__payment__user_' . $u['id'];
+        $upsert = db()->prepare('INSERT INTO devices(device_id, owner_user_id, name, last_seen) VALUES(?,?,?,NOW()) ON DUPLICATE KEY UPDATE owner_user_id = VALUES(owner_user_id), last_seen = VALUES(last_seen)');
+        $upsert->execute([$virtualDeviceId, $u['id'], 'Payment uploads']);
+
+        $uri = '/api/media/' . $virtualDeviceId . '/upload';
+    }
+
     // Media
     if ($method === 'GET' && ($m = route_match('/api/media/list/:deviceId', $uri))) {
         $u = auth_user();
@@ -540,28 +714,33 @@ try {
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
-        $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId, storage_path as storagePath FROM media WHERE device_id=? ORDER BY upload_date DESC');
-        $st->execute([$m['deviceId']]);
-        global $config;
-        $files = array_map(function ($r) use ($config) {
-            $contentType = (string)($r['contentType'] ?? 'application/octet-stream');
-            $kind = str_starts_with($contentType, 'image/')
-                ? 'image'
-                : (str_starts_with($contentType, 'audio/')
-                    ? 'audio'
-                    : (str_starts_with($contentType, 'video/') ? 'video' : 'other'));
-            $path = rtrim($config['media_dir'], '/') . '/' . ($r['storagePath'] ?? '');
-            return [
-                'fileId' => $r['fileId'],
-                'filename' => $r['filename'],
-                'contentType' => $contentType,
-                'uploadDate' => $r['uploadDate'],
-                'kind' => $kind,
-                'sizeBytes' => is_file($path) ? filesize($path) : null,
-                'metadata' => ['checksum' => $r['checksum'], 'deviceId' => $r['deviceId']],
-            ];
-        }, $st->fetchAll());
-        json_response(['ok' => true, 'files' => $files]);
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $pageSize = max(1, min(60, (int)($_GET['pageSize'] ?? 24)));
+        $offset = ($page - 1) * $pageSize;
+
+        $countSt = db()->prepare('SELECT COUNT(*) FROM media WHERE device_id = ?');
+        $countSt->execute([$m['deviceId']]);
+        $total = (int)$countSt->fetchColumn();
+
+        $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId, storage_path as storagePath FROM media WHERE device_id=? ORDER BY upload_date DESC LIMIT ? OFFSET ?');
+        $st->bindValue(1, $m['deviceId']);
+        $st->bindValue(2, $pageSize, PDO::PARAM_INT);
+        $st->bindValue(3, $offset, PDO::PARAM_INT);
+        $st->execute();
+        $rows = $st->fetchAll();
+        $files = array_map(fn ($row) => format_media_row($row, $u), $rows);
+
+        json_response([
+            'ok' => true,
+            'files' => $files,
+            'pagination' => [
+                'page' => $page,
+                'pageSize' => $pageSize,
+                'total' => $total,
+                'totalPages' => (int)max(1, ceil($total / max(1, $pageSize))),
+                'hasMore' => ($offset + count($files)) < $total,
+            ],
+        ]);
     }
 
     if ($method === 'POST' && $uri === '/api/media/checksum') {
@@ -580,7 +759,9 @@ try {
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
+        $startedAt = microtime(true);
         if (!isset($_FILES['media']) || $_FILES['media']['error'] !== UPLOAD_ERR_OK) {
+            record_metric($m['deviceId'], 'media_pipeline', 'upload', 'error', (int)round((microtime(true) - $startedAt) * 1000), null, ['reason' => 'no_file']);
             json_response(['ok' => false, 'error' => 'no_file'], 400);
         }
 
@@ -590,7 +771,10 @@ try {
         $st = db()->prepare('SELECT file_id FROM media WHERE checksum = ? LIMIT 1');
         $st->execute([$checksum]);
         $existing = $st->fetch();
-        if ($existing) json_response(['ok' => true, 'exists' => true, 'fileId' => $existing['file_id']]);
+        if ($existing) {
+            record_metric($m['deviceId'], 'media_pipeline', 'upload', 'deduplicated', (int)round((microtime(true) - $startedAt) * 1000), null, ['fileId' => $existing['file_id']]);
+            json_response(['ok' => true, 'exists' => true, 'fileId' => $existing['file_id']]);
+        }
 
         $fileId = bin2hex(random_bytes(16));
         $safeName = $fileId . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($_FILES['media']['name']));
@@ -599,7 +783,10 @@ try {
         if (!is_dir($config['media_dir'])) mkdir($config['media_dir'], 0775, true);
 
         $dest = rtrim($config['media_dir'], '/') . '/' . $safeName;
-        if (!move_uploaded_file($tmp, $dest)) json_response(['ok' => false, 'error' => 'upload_failed'], 500);
+        if (!move_uploaded_file($tmp, $dest)) {
+            record_metric($m['deviceId'], 'media_pipeline', 'upload', 'error', (int)round((microtime(true) - $startedAt) * 1000), null, ['reason' => 'upload_failed']);
+            json_response(['ok' => false, 'error' => 'upload_failed'], 500);
+        }
 
         $ins = db()->prepare('INSERT INTO media(file_id, device_id, filename, content_type, checksum, storage_path) VALUES(?,?,?,?,?,?)');
         $ins->execute([
@@ -611,19 +798,47 @@ try {
             $safeName,
         ]);
 
+        $metaBody = [
+            'captureMode' => trim((string)($_POST['captureMode'] ?? '')),
+            'captureKind' => trim((string)($_POST['captureKind'] ?? '')),
+            'supportSessionId' => trim((string)($_POST['supportSessionId'] ?? '')),
+            'segmentStartedAt' => json_datetime_from_millis($_POST['segmentStartedAtMs'] ?? null),
+            'segmentDurationMs' => isset($_POST['segmentDurationMs']) && is_numeric($_POST['segmentDurationMs']) ? (int)$_POST['segmentDurationMs'] : null,
+            'metadataJson' => safe_json_decode($_POST['metadataJson'] ?? null),
+        ];
+        if ($metaBody['captureMode'] !== '' || $metaBody['captureKind'] !== '' || $metaBody['supportSessionId'] !== '' || $metaBody['segmentStartedAt'] !== null || $metaBody['segmentDurationMs'] !== null || $metaBody['metadataJson']) {
+            $metaIns = db()->prepare('INSERT INTO media_metadata(file_id, capture_mode, capture_kind, support_session_id, segment_started_at, segment_duration_ms, metadata_json) VALUES(?,?,?,?,?,?,?)');
+            $metaIns->execute([
+                $fileId,
+                $metaBody['captureMode'] !== '' ? $metaBody['captureMode'] : null,
+                $metaBody['captureKind'] !== '' ? $metaBody['captureKind'] : null,
+                $metaBody['supportSessionId'] !== '' ? $metaBody['supportSessionId'] : null,
+                $metaBody['segmentStartedAt'],
+                $metaBody['segmentDurationMs'],
+                $metaBody['metadataJson'] ? json_encode($metaBody['metadataJson']) : null,
+            ]);
+        }
+
+        record_metric($m['deviceId'], 'media_pipeline', 'upload', 'ok', (int)round((microtime(true) - $startedAt) * 1000), isset($_FILES['media']['size']) ? ((float)$_FILES['media']['size'] / 1024) : null, [
+            'fileId' => $fileId,
+            'contentType' => $_FILES['media']['type'] ?: 'application/octet-stream',
+            'captureMode' => $metaBody['captureMode'] !== '' ? $metaBody['captureMode'] : null,
+            'captureKind' => $metaBody['captureKind'] !== '' ? $metaBody['captureKind'] : null,
+            'supportSessionId' => $metaBody['supportSessionId'] !== '' ? $metaBody['supportSessionId'] : null,
+        ]);
+
         json_response(['ok' => true, 'fileId' => $fileId, 'checksum' => $checksum]);
     }
 
     if ($method === 'GET' && ($m = route_match('/api/media/download/:fileId', $uri))) {
+        $download = isset($_GET['download']) && $_GET['download'] === '1';
         $u = auth_user(false);
-        if (!$u && !empty($_GET['access_token'])) {
-            $u = jwt_verify((string)$_GET['access_token']) ?: null;
+        if (!$u && !empty($_GET['media_token'])) {
+            $u = verify_signed_media_token((string)$_GET['media_token'], $m['fileId'], $download);
         }
         if (!$u) json_response(['error' => 'invalid_token'], 401);
 
-        $st = db()->prepare('SELECT * FROM media WHERE file_id = ? LIMIT 1');
-        $st->execute([$m['fileId']]);
-        $f = $st->fetch();
+        $f = find_media_record($m['fileId']);
         if (!$f) json_response(['ok' => false, 'error' => 'not_found'], 404);
 
         $d = find_device($f['device_id']);
@@ -632,25 +847,29 @@ try {
 
         global $config;
         $path = rtrim($config['media_dir'], '/') . '/' . $f['storage_path'];
-        if (!is_file($path)) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!is_file($path)) {
+            record_metric($f['device_id'], 'media_pipeline', 'download', 'error', null, null, ['fileId' => $m['fileId'], 'reason' => 'missing_file']);
+            json_response(['ok' => false, 'error' => 'not_found'], 404);
+        }
 
         $mime = $f['content_type'] ?: 'application/octet-stream';
         $size = filesize($path) ?: 0;
-        $download = isset($_GET['download']) && $_GET['download'] === '1';
         $filename = basename((string)$f['filename']);
         $start = 0;
         $end = max(0, $size - 1);
+        $status = 'full';
 
         header('Content-Type: ' . $mime);
         header('Accept-Ranges: bytes');
         header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="' . $filename . '"');
-        header('Cache-Control: private, max-age=3600');
+        header('Cache-Control: private, max-age=300');
 
         if ($size > 0 && isset($_SERVER['HTTP_RANGE']) && preg_match('/bytes=(\d*)-(\d*)/', (string)$_SERVER['HTTP_RANGE'], $matches)) {
             if ($matches[1] !== '') $start = (int)$matches[1];
             if ($matches[2] !== '') $end = (int)$matches[2];
             $start = max(0, min($start, $size - 1));
             $end = max($start, min($end, $size - 1));
+            $status = 'partial';
             http_response_code(206);
             header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
             header('Content-Length: ' . (($end - $start) + 1));
@@ -658,8 +877,17 @@ try {
             header('Content-Length: ' . $size);
         }
 
+        record_metric($f['device_id'], 'media_pipeline', 'download', $status, null, $size > 0 ? (($end - $start) + 1) : 0, [
+            'fileId' => $m['fileId'],
+            'download' => $download,
+            'contentType' => $mime,
+        ]);
+
         $fp = fopen($path, 'rb');
-        if (!$fp) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!$fp) {
+            record_metric($f['device_id'], 'media_pipeline', 'download', 'error', null, null, ['fileId' => $m['fileId'], 'reason' => 'open_failed']);
+            json_response(['ok' => false, 'error' => 'not_found'], 404);
+        }
         if ($start > 0) fseek($fp, $start);
 
         $remaining = ($end - $start) + 1;

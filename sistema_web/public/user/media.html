@@ -10,7 +10,7 @@
     <header class="page-header">
       <div>
         <h1>Recepção de media</h1>
-        <p class="small">Imagens de ecrã, áudio e outros ficheiros recebidos do dispositivo com pré-visualização nativa e carregamento otimizado.</p>
+        <p class="small">Biblioteca paginada com pré-visualizações assinadas de curta duração e renderização incremental.</p>
       </div>
       <div class="action-row">
         <a class="btn" href="/user/dashboard.html">Voltar</a>
@@ -34,18 +34,23 @@
       </div>
       <div class="media-stats" id="mediaStats"></div>
       <div class="media-filter-row" id="mediaFilters"></div>
+      <div class="media-pagination-summary small" id="mediaSummary"></div>
     </div>
 
     <div class="card">
       <div id="mediaGrid" class="media-grid"></div>
+      <div id="renderSentinel" class="media-render-sentinel"></div>
       <div id="emptyState" class="empty-state" style="display:none"></div>
+      <div class="pagination-row">
+        <button id="prevPage">Página anterior</button>
+        <button id="nextPage">Próxima página</button>
+      </div>
     </div>
   </div>
 
   <script src="/js/api.js"></script>
   <script>
     if (!localStorage.getItem('auth_token')) location.href = '/';
-    const token = localStorage.getItem('auth_token');
     const params = new URLSearchParams(window.location.search);
     const deviceIdInput = document.getElementById('deviceId');
     const searchInput = document.getElementById('searchInput');
@@ -53,7 +58,18 @@
     const emptyState = document.getElementById('emptyState');
     const mediaStats = document.getElementById('mediaStats');
     const mediaFilters = document.getElementById('mediaFilters');
-    const state = { files: [], filter: 'all', search: '' };
+    const mediaSummary = document.getElementById('mediaSummary');
+    const renderSentinel = document.getElementById('renderSentinel');
+    const prevPageBtn = document.getElementById('prevPage');
+    const nextPageBtn = document.getElementById('nextPage');
+    const state = {
+      files: [],
+      filteredFiles: [],
+      renderedCount: 0,
+      filter: 'all',
+      search: '',
+      pagination: { page: 1, pageSize: 24, total: 0, totalPages: 1, hasMore: false }
+    };
     const FILTERS = [
       { key: 'all', label: 'Tudo' },
       { key: 'image', label: 'Imagens' },
@@ -61,20 +77,17 @@
       { key: 'video', label: 'Vídeo' },
       { key: 'other', label: 'Outros' }
     ];
+    const BATCH_SIZE = 8;
 
     if (params.get('deviceId')) deviceIdInput.value = params.get('deviceId');
     document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/'; });
-    document.getElementById('btnLoad').addEventListener('click', loadMedia);
+    document.getElementById('btnLoad').addEventListener('click', () => loadMedia(1));
     searchInput.addEventListener('input', () => {
       state.search = searchInput.value.trim().toLowerCase();
-      renderMedia();
+      applyFilters();
     });
-
-    function buildSecureUrl(fileId, download = false) {
-      const qs = new URLSearchParams({ access_token: token });
-      if (download) qs.set('download', '1');
-      return '/api/media/download/' + encodeURIComponent(fileId) + '?' + qs.toString();
-    }
+    prevPageBtn.addEventListener('click', () => loadMedia(state.pagination.page - 1));
+    nextPageBtn.addEventListener('click', () => loadMedia(state.pagination.page + 1));
 
     function inferKind(file) {
       if (file.kind) return file.kind;
@@ -102,7 +115,7 @@
         totals.bytes += Number(file.sizeBytes || 0);
       });
       mediaStats.innerHTML = `
-        <div class="media-stat"><span class="small">Total</span><strong>${totals.all}</strong></div>
+        <div class="media-stat"><span class="small">Nesta página</span><strong>${totals.all}</strong></div>
         <div class="media-stat"><span class="small">Imagens</span><strong>${totals.image}</strong></div>
         <div class="media-stat"><span class="small">Áudio</span><strong>${totals.audio}</strong></div>
         <div class="media-stat"><span class="small">Vídeo</span><strong>${totals.video}</strong></div>
@@ -116,77 +129,98 @@
       FILTERS.forEach(filter => {
         const btn = document.createElement('button');
         btn.textContent = filter.label;
-        if (state.filter === filter.key) btn.style.outline = '2px solid rgba(255,255,255,.45)';
+        btn.className = state.filter === filter.key ? 'is-active' : '';
         btn.addEventListener('click', () => {
           state.filter = filter.key;
           renderFilters();
-          renderMedia();
+          applyFilters();
         });
         mediaFilters.appendChild(btn);
       });
+    }
+
+    function previewMarkup(file) {
+      const safeName = (file.filename || '').replace(/</g, '&lt;');
+      const kind = inferKind(file);
+      const src = file.previewUrl;
+      if (kind === 'image') return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${safeName}" loading="lazy" decoding="async"></a>`;
+      if (kind === 'audio') return `<audio controls preload="metadata"><source src="${src}" type="${file.contentType || 'audio/mpeg'}"></audio>`;
+      if (kind === 'video') return `<video controls preload="metadata" playsinline><source src="${src}" type="${file.contentType || 'video/mp4'}"></video>`;
+      return `<div class="media-empty">Pré-visualização indisponível<br><span class="small">${safeName}</span></div>`;
     }
 
     function filterFiles() {
       return state.files.filter(file => {
         const kind = inferKind(file);
         const matchesFilter = state.filter === 'all' || kind === state.filter;
-        const haystack = [file.filename, file.contentType, file.uploadDate, kind].join(' ').toLowerCase();
+        const haystack = [file.filename, file.contentType, file.uploadDate, kind, file.captureMode, file.captureKind].join(' ').toLowerCase();
         const matchesSearch = !state.search || haystack.includes(state.search);
         return matchesFilter && matchesSearch;
       });
     }
 
-    function previewMarkup(file) {
-      const safeName = file.filename.replace(/</g, '&lt;');
-      const kind = inferKind(file);
-      const src = buildSecureUrl(file.fileId, false);
-      if (kind === 'image') {
-        return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="${safeName}" loading="lazy" decoding="async"></a>`;
-      }
-      if (kind === 'audio') {
-        return `<audio controls preload="metadata"><source src="${src}" type="${file.contentType || 'audio/mpeg'}"></audio>`;
-      }
-      if (kind === 'video') {
-        return `<video controls preload="metadata" playsinline><source src="${src}" type="${file.contentType || 'video/mp4'}"></video>`;
-      }
-      return `<div class="media-empty">Pré-visualização indisponível<br><span class="small">${safeName}</span></div>`;
-    }
-
-    function renderMedia() {
-      const files = filterFiles();
-      mediaGrid.innerHTML = '';
-      emptyState.style.display = files.length ? 'none' : 'block';
-      emptyState.textContent = files.length ? '' : 'Nenhum ficheiro corresponde aos filtros atuais.';
+    function renderBatch() {
+      const slice = state.filteredFiles.slice(state.renderedCount, state.renderedCount + BATCH_SIZE);
       const fragment = document.createDocumentFragment();
-      files.forEach(file => {
+      slice.forEach(file => {
         const card = document.createElement('article');
         const kind = inferKind(file);
+        const sessionBadge = file.supportSessionId ? `<span class="media-chip">sessão ${file.supportSessionId.slice(0, 8)}</span>` : '';
+        const captureBadge = file.captureMode ? `<span class="media-chip">${file.captureMode}</span>` : '';
         card.className = 'media-card';
         card.innerHTML = `
           <div class="media-preview">${previewMarkup(file)}</div>
           <div class="media-meta">
             <div class="media-title">${file.filename}</div>
             <div class="media-subtitle">${new Date(file.uploadDate).toLocaleString()}</div>
+            ${file.segmentDurationMs ? `<div class="media-subtitle">Segmento live: ${Math.round(file.segmentDurationMs / 1000)}s</div>` : ''}
           </div>
           <div class="media-chip-row">
             <span class="media-chip">${kind}</span>
             <span class="media-chip">${file.contentType || 'application/octet-stream'}</span>
             <span class="media-chip">${formatBytes(file.sizeBytes)}</span>
+            ${captureBadge}
+            ${sessionBadge}
           </div>
           <div class="media-actions">
-            <a class="btn" href="${buildSecureUrl(file.fileId, false)}" target="_blank" rel="noopener">Abrir</a>
-            <a class="btn" href="${buildSecureUrl(file.fileId, true)}">Descarregar</a>
+            <a class="btn" href="${file.previewUrl}" target="_blank" rel="noopener">Abrir</a>
+            <a class="btn" href="${file.downloadUrl}">Descarregar</a>
           </div>
         `;
         fragment.appendChild(card);
       });
       mediaGrid.appendChild(fragment);
+      state.renderedCount += slice.length;
+      renderSentinel.style.display = state.renderedCount < state.filteredFiles.length ? 'block' : 'none';
     }
 
-    async function loadMedia() {
+    function resetRenderedList() {
+      mediaGrid.innerHTML = '';
+      state.renderedCount = 0;
+      emptyState.style.display = state.filteredFiles.length ? 'none' : 'block';
+      emptyState.textContent = state.filteredFiles.length ? '' : 'Nenhum ficheiro corresponde aos filtros atuais.';
+      if (state.filteredFiles.length) renderBatch();
+      renderSummary();
+    }
+
+    function renderSummary() {
+      const p = state.pagination;
+      mediaSummary.textContent = `Página ${p.page} de ${p.totalPages} · ${p.total} ficheiro(s) no total · ${state.filteredFiles.length} visível(eis) após filtros locais`;
+      prevPageBtn.disabled = p.page <= 1;
+      nextPageBtn.disabled = !p.hasMore;
+    }
+
+    function applyFilters() {
+      state.filteredFiles = filterFiles();
+      renderStats(state.filteredFiles);
+      resetRenderedList();
+    }
+
+    async function loadMedia(page = 1) {
       const deviceId = deviceIdInput.value.trim();
       if (!deviceId) return alert('DeviceId required');
-      const r = await apiFetch('/api/media/list/' + encodeURIComponent(deviceId), { method:'GET' });
+      const query = new URLSearchParams({ page: String(Math.max(1, page)), pageSize: String(state.pagination.pageSize) });
+      const r = await apiFetch('/api/media/list/' + encodeURIComponent(deviceId) + '?' + query.toString(), { method:'GET' });
       if (!r.ok) {
         mediaGrid.innerHTML = '';
         emptyState.style.display = 'block';
@@ -194,13 +228,20 @@
         return;
       }
       state.files = (r.files || []).map(file => ({ ...file, kind: inferKind(file) }));
-      renderStats(state.files);
-      renderFilters();
-      renderMedia();
+      state.pagination = r.pagination || state.pagination;
+      applyFilters();
     }
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting && state.renderedCount < state.filteredFiles.length) renderBatch();
+      });
+    }, { rootMargin: '200px' });
+    observer.observe(renderSentinel);
 
     renderFilters();
     renderStats([]);
+    renderSummary();
     if (deviceIdInput.value) loadMedia();
   </script>
 </body>

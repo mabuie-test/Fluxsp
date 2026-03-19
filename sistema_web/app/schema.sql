@@ -88,3 +88,31 @@ CREATE TABLE IF NOT EXISTS support_sessions (
   INDEX idx_support_sessions_device_status (device_id, status),
   INDEX idx_support_sessions_device_requested (device_id, requested_at)
 );
+
+
+CREATE TABLE IF NOT EXISTS media_metadata (
+  file_id CHAR(36) NOT NULL PRIMARY KEY,
+  capture_mode VARCHAR(50) NULL,
+  capture_kind VARCHAR(50) NULL,
+  support_session_id CHAR(32) NULL,
+  segment_started_at DATETIME NULL,
+  segment_duration_ms INT NULL,
+  metadata_json JSON NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_media_metadata_session (support_session_id, created_at),
+  INDEX idx_media_metadata_kind (capture_kind, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS system_metrics (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NULL,
+  metric_type VARCHAR(50) NOT NULL,
+  metric_name VARCHAR(100) NOT NULL,
+  status VARCHAR(50) NULL,
+  value_ms INT NULL,
+  value_num DECIMAL(12,2) NULL,
+  context_json JSON NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_system_metrics_device_type (device_id, metric_type, created_at),
+  INDEX idx_system_metrics_name (metric_name, created_at)
+);
