@@ -29,6 +29,16 @@ public class HttpClient {
 		res.close();
 		return s;
 	}
+
+	public static String getJson(String url, String bearerToken) throws IOException {
+		Request.Builder rb = new Request.Builder().url(url).get();
+		if (bearerToken != null && bearerToken.length() > 0) rb.header("Authorization", "Bearer " + bearerToken);
+		Request request = rb.build();
+		Response res = client.newCall(request).execute();
+		String s = res.body() != null ? res.body().string() : null;
+		res.close();
+		return s;
+	}
 	
 	// Upload de ficheiro (campo form `fieldName`) usando multipart/form-data
 	public static String uploadFile(String url, String fieldName, String filename, byte[] data, String mimeType, String bearerToken) throws IOException {

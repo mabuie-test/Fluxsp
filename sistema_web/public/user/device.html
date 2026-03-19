@@ -6,7 +6,12 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-  <style>#map{height:420px}</style>
+  <style>
+    #map{height:420px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .actions button{width:auto}
+    .small{font-size:.9em;color:#666}
+  </style>
 </head>
 <body>
   <div class="container">
@@ -16,6 +21,18 @@
     </header>
 
     <div class="card" id="deviceInfo">Loading...</div>
+    <div class="card">
+      <h3>Sessões de suporte</h3>
+      <p class="small">Cada pedido é mostrado localmente no Android. O utilizador precisa aprovar manualmente cada sessão e pode encerrá-la a qualquer momento.</p>
+      <div class="actions">
+        <button id="btnRequestScreen">Pedir partilha de ecrã</button>
+        <button id="btnRequestAudio">Pedir áudio temporário</button>
+        <button id="btnStopSession">Parar sessão ativa</button>
+      </div>
+      <p id="supportMsg" class="small"></p>
+      <div id="activeSupport" class="small">A carregar estado...</div>
+      <ul id="supportHistory" style="padding-left:20px"></ul>
+    </div>
     <div id="map" class="card"></div>
     <div class="card">
       <h3>History</h3>
@@ -28,8 +45,7 @@
     const params = new URLSearchParams(window.location.search);
     const deviceId = params.get('deviceId');
     if (!deviceId) { alert('deviceId missing'); location.href='/user/dashboard.html'; }
-    const token = localStorage.getItem('auth_token');
-    if (!token) { location.href='/'; }
+    if (!localStorage.getItem('auth_token')) { location.href='/'; }
 
     async function loadDevice(){
       const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' });
@@ -45,13 +61,70 @@
       const r = await apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/history', { method:'GET' });
       const ul = document.getElementById('historyList');
       ul.innerHTML = '';
-      if (!r.ok) { ul.innerHTML = '<li>Erro: ' + (r.error||JSON.stringify(r)) + '</li>'; return; }
+      if (!r.ok) { ul.innerHTML = '<li>Erro: ' + (r.error || JSON.stringify(r)) + '</li>'; return []; }
       r.items.forEach(item => {
         const li = document.createElement('li');
         const ts = new Date(item.ts).toLocaleString();
         li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small class="small">${ts}</small><div>${JSON.stringify(item.payload)}</div></div>`;
         ul.appendChild(li);
       });
+      return r.items;
+    }
+
+    async function requestSupport(requestType) {
+      const res = await apiFetch('/api/support-sessions/request', {
+        method:'POST',
+        body: {
+          deviceId,
+          requestType,
+          responseTtlSeconds: 120,
+          sessionTtlSeconds: 600
+        }
+      });
+      document.getElementById('supportMsg').textContent = res.ok
+        ? 'Pedido enviado. Aguarde a aprovação local no dispositivo.'
+        : 'Erro ao criar pedido: ' + (res.error || JSON.stringify(res));
+      await loadSupportState();
+    }
+
+    async function stopSupportSession(sessionId) {
+      if (!sessionId) return;
+      const res = await apiFetch('/api/support-sessions/' + encodeURIComponent(sessionId) + '/stop', { method:'POST', body:{} });
+      document.getElementById('supportMsg').textContent = res.ok
+        ? 'Sessão parada.'
+        : 'Erro ao parar sessão: ' + (res.error || JSON.stringify(res));
+      await loadSupportState();
+    }
+
+    function renderSupportHistory(sessions) {
+      const ul = document.getElementById('supportHistory');
+      ul.innerHTML = '';
+      sessions.forEach(session => {
+        const li = document.createElement('li');
+        li.textContent = `${new Date(session.requestedAt).toLocaleString()} — ${session.requestType} — ${session.status}`;
+        ul.appendChild(li);
+      });
+      if (!sessions.length) ul.innerHTML = '<li>Sem sessões recentes.</li>';
+    }
+
+    async function loadSupportState() {
+      const activeRes = await apiFetch('/api/support-sessions/device/' + encodeURIComponent(deviceId) + '/active', { method:'GET' });
+      const listRes = await apiFetch('/api/support-sessions/device/' + encodeURIComponent(deviceId) + '/list', { method:'GET' });
+      const activeEl = document.getElementById('activeSupport');
+      const stopBtn = document.getElementById('btnStopSession');
+      stopBtn.onclick = null;
+
+      if (activeRes.ok && activeRes.session) {
+        const s = activeRes.session;
+        activeEl.textContent = `Sessão ativa: ${s.requestType} até ${new Date(s.sessionExpiresAt).toLocaleString()}.`;
+        stopBtn.disabled = false;
+        stopBtn.onclick = () => stopSupportSession(s.sessionId);
+      } else {
+        activeEl.textContent = 'Nenhuma sessão ativa.';
+        stopBtn.disabled = true;
+      }
+
+      renderSupportHistory(listRes.ok ? listRes.sessions : []);
     }
 
     let map, marker;
@@ -67,7 +140,12 @@
     }
 
     (async function(){
+      document.getElementById('btnRequestScreen').addEventListener('click', () => requestSupport('screen'));
+      document.getElementById('btnRequestAudio').addEventListener('click', () => requestSupport('ambient_audio'));
+      document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
+
       await loadDevice();
+      await loadSupportState();
       const items = await loadHistory();
       if (items && items.length>0) {
         const first = items[0];
@@ -88,8 +166,6 @@
           ul.insertBefore(li, ul.firstChild);
         }
       });
-
-      document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
     })();
   </script>
 </body>

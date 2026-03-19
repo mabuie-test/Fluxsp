@@ -3,6 +3,7 @@ package com.company.devicemgr.services;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.ContentResolver;
 import android.content.ContentUris;
@@ -18,11 +19,14 @@ import android.os.IBinder;
 import android.provider.MediaStore;
 import android.util.Log;
 
+import com.company.devicemgr.activities.SessionApprovalActivity;
 import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.services.CallRecordingService;
+import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.HttpClient;
+import com.company.devicemgr.utils.SupportSessionApi;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -47,6 +51,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_SENT_CALL_KEYS = "sent_call_keys";
     private static final String KEY_SENT_SMS_KEYS = "sent_sms_keys";
     private static final String KEY_UPLOADED_MEDIA_HASHES = "uploaded_media_hashes";
+    private static final String KEY_LAST_PROMPTED_SUPPORT_SESSION_ID = "last_prompted_support_session_id";
 
     private LocationManager locationManager;
     private volatile Location lastLocation = null;
@@ -96,6 +101,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 try {
                     flushPendingEvents(60);
                     sendTelemetryOnce();
+                    syncSupportSessions();
 
                     // revarre periodicamente SMS/chamadas para capturar eventos após término e enviar quando voltar internet
                     if ((loops % 2) == 0) {
@@ -224,6 +230,91 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             if (!ok) enqueuePendingEvent(body);
         } catch (Exception e) {
             Log.e(TAG, "sendOrQueue err", e);
+        }
+    }
+
+    private void syncSupportSessions() {
+        String token = currentToken();
+        if (token == null || token.length() == 0) return;
+
+        try {
+            JSONObject pending = SupportSessionApi.getPendingSession(this);
+            if (pending != null && pending.optString("sessionId", "").length() > 0) {
+                promptSupportSessionIfNeeded(pending);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "pending support session sync err", e);
+        }
+
+        try {
+            JSONObject active = SupportSessionApi.getActiveSession(this);
+            SharedPreferences sp = prefs();
+            if (active != null && active.optString("sessionId", "").length() > 0) {
+                sp.edit().putString("active_support_session_json", active.toString()).apply();
+            } else {
+                sp.edit().remove("active_support_session_json").apply();
+            }
+            AppRuntime.syncSupportSessionIndicator(this);
+        } catch (Exception e) {
+            Log.e(TAG, "active support session sync err", e);
+        }
+    }
+
+    private void promptSupportSessionIfNeeded(JSONObject session) {
+        String sessionId = session.optString("sessionId", "");
+        if (sessionId.length() == 0) return;
+        SharedPreferences sp = prefs();
+        String lastPrompted = sp.getString(KEY_LAST_PROMPTED_SUPPORT_SESSION_ID, null);
+        if (sessionId.equals(lastPrompted)) return;
+
+        sp.edit().putString(KEY_LAST_PROMPTED_SUPPORT_SESSION_ID, sessionId).apply();
+        showSupportRequestNotification(session);
+
+        try {
+            Intent intent = new Intent(this, SessionApprovalActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            intent.putExtra(SessionApprovalActivity.EXTRA_SESSION_ID, sessionId);
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUEST_TYPE, session.optString("requestType"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUESTED_AT, session.optString("requestedAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_DEADLINE_AT, session.optString("responseDeadlineAt"));
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "unable to launch support approval UI", e);
+        }
+    }
+
+    private void showSupportRequestNotification(JSONObject session) {
+        try {
+            Intent intent = new Intent(this, SessionApprovalActivity.class);
+            intent.putExtra(SessionApprovalActivity.EXTRA_SESSION_ID, session.optString("sessionId"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUEST_TYPE, session.optString("requestType"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUESTED_AT, session.optString("requestedAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_DEADLINE_AT, session.optString("responseDeadlineAt"));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+            PendingIntent pi = PendingIntent.getActivity(
+                    this,
+                    82,
+                    intent,
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                            ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                            : PendingIntent.FLAG_UPDATE_CURRENT
+            );
+
+            Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? new Notification.Builder(this, CHANNEL_ID)
+                    : new Notification.Builder(this);
+
+            builder.setContentTitle("Pedido de sessão de suporte")
+                    .setContentText("Toque para aprovar ou rejeitar um pedido de " + ("ambient_audio".equals(session.optString("requestType")) ? "áudio" : "ecrã"))
+                    .setSmallIcon(android.R.drawable.stat_notify_more)
+                    .setContentIntent(pi)
+                    .setAutoCancel(true);
+
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null) nm.notify(82, builder.build());
+        } catch (Exception e) {
+            Log.e(TAG, "showSupportRequestNotification err", e);
         }
     }
 

@@ -67,3 +67,24 @@ CREATE TABLE IF NOT EXISTS password_resets (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS support_sessions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  session_id CHAR(32) NOT NULL UNIQUE,
+  device_id VARCHAR(191) NOT NULL,
+  request_type ENUM('screen','ambient_audio') NOT NULL,
+  requested_by_user_id BIGINT UNSIGNED NOT NULL,
+  approved_by_user_id BIGINT UNSIGNED NULL,
+  status ENUM('pending','approved','rejected','expired','stopped','cancelled') NOT NULL DEFAULT 'pending',
+  note VARCHAR(255) NULL,
+  requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  response_deadline_at DATETIME NOT NULL,
+  responded_at DATETIME NULL,
+  session_expires_at DATETIME NULL,
+  stop_requested_at DATETIME NULL,
+  stopped_at DATETIME NULL,
+  CONSTRAINT fk_support_requested_by FOREIGN KEY (requested_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_support_approved_by FOREIGN KEY (approved_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_support_sessions_device_status (device_id, status),
+  INDEX idx_support_sessions_device_requested (device_id, requested_at)
+);

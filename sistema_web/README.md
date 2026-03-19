@@ -47,3 +47,8 @@ composer require phpmailer/phpmailer
 - A app Android faz associação automática do `deviceId` ao utilizador no login via `POST /api/devices/auto-assign`.
 - O painel web deixa de depender de reivindicação manual do aparelho.
 - A app usa um identificador estável do Android para evitar que o mesmo aparelho seja adicionado várias vezes.
+
+## Sessões de suporte aprovadas localmente
+- O backend pode criar um pedido de sessão temporária para `screen` ou `ambient_audio` via `POST /api/support-sessions/request`.
+- A app Android consulta pedidos pendentes, mostra um pedido local ao utilizador e exige aprovação manual em cada sessão.
+- Sessões aprovadas expiram automaticamente, ficam visíveis com notificação persistente e podem ser interrompidas a qualquer momento pela app ou pelo painel.

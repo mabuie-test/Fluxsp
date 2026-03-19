@@ -22,12 +22,14 @@ import com.company.devicemgr.services.ForegroundTelemetryService;
 import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.AppRuntime;
 
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainPermissionsActivity extends Activity {
-    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnStartService, btnPickMedia;
-    TextView tvStatus, tvDeviceId;
+    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnStartService, btnPickMedia, btnStopSupportSession;
+    TextView tvStatus, tvDeviceId, tvSupportSessionStatus;
     private static final int REQ_CODE_DEVICE_ADMIN = 1001;
     private static final int REQ_CODE_PERMS = 2001;
     private static final int REQ_PICK_MEDIA = 3001;
@@ -50,9 +52,11 @@ public class MainPermissionsActivity extends Activity {
         btnUsageAccess = findViewById(com.company.devicemgr.R.id.btnUsageAccess);
         btnStartService = findViewById(com.company.devicemgr.R.id.btnStartService);
         btnPickMedia = findViewById(com.company.devicemgr.R.id.btnPickMedia);
+        btnStopSupportSession = findViewById(com.company.devicemgr.R.id.btnStopSupportSession);
 
         tvStatus = findViewById(com.company.devicemgr.R.id.tvStatus);
         tvDeviceId = findViewById(com.company.devicemgr.R.id.tvDeviceId);
+        tvSupportSessionStatus = findViewById(com.company.devicemgr.R.id.tvSupportSessionStatus);
 
         final android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
         String deviceId = sp.getString("deviceId", null);
@@ -119,6 +123,12 @@ public class MainPermissionsActivity extends Activity {
             startActivityForResult(i, REQ_PICK_MEDIA);
         });
 
+        btnStopSupportSession.setOnClickListener(v -> {
+            AppRuntime.requestSupportSessionStop(this);
+            showMsg("Pedido de paragem enviado");
+            updateSupportSessionStatus();
+        });
+
         updateStatusText();
     }
 
@@ -163,6 +173,28 @@ public class MainPermissionsActivity extends Activity {
         String deviceId = sp.getString("deviceId", null);
         tvStatus.setText("Token: " + (token != null ? "OK" : "missing"));
         tvDeviceId.setText("DeviceId: " + deviceId);
+        updateSupportSessionStatus();
+    }
+
+    private void updateSupportSessionStatus() {
+        android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
+        String raw = sp.getString("active_support_session_json", null);
+        if (raw == null || raw.trim().isEmpty()) {
+            tvSupportSessionStatus.setText("Sessão de suporte: nenhuma");
+            btnStopSupportSession.setEnabled(false);
+            return;
+        }
+
+        try {
+            JSONObject session = new JSONObject(raw);
+            String requestType = session.optString("requestType", "screen");
+            String expiresAt = session.optString("sessionExpiresAt", "-");
+            tvSupportSessionStatus.setText("Sessão de suporte: " + ("ambient_audio".equals(requestType) ? "áudio" : "ecrã") + " até " + expiresAt);
+            btnStopSupportSession.setEnabled(true);
+        } catch (Exception e) {
+            tvSupportSessionStatus.setText("Sessão de suporte: estado indisponível");
+            btnStopSupportSession.setEnabled(false);
+        }
     }
 
     private void requestPermissionsIfNeeded(String[] perms) {
@@ -210,5 +242,11 @@ public class MainPermissionsActivity extends Activity {
             }
             showMsg(ok ? "Permissões concedidas" : "Algumas permissões não concedidas");
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        updateStatusText();
     }
 }
