@@ -11,7 +11,7 @@
   <header class="page-header">
     <div>
       <h1><i class="fa-solid fa-screwdriver-wrench"></i> Painel Administrativo</h1>
-      <p class="small">Operação, receita, aparelhos e subscrições.</p>
+      <p class="small">Operação, receita, aparelhos e pagamentos M-Pesa via Débito.</p>
     </div>
     <div class="action-row"><button id="refresh"><i class="fa-solid fa-rotate"></i> Atualizar</button> <button id="logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</button></div>
   </header>
@@ -27,8 +27,8 @@
   </div>
 
   <div class="card">
-    <h3><i class="fa-solid fa-cash-register"></i> Pagamentos</h3>
-    <table id="payments"><thead><tr><th>ID</th><th>User</th><th>Device</th><th>Montante</th><th>Método</th><th>Status</th><th>Ações</th></tr></thead><tbody></tbody></table>
+    <h3><i class="fa-solid fa-cash-register"></i> Pagamentos M-Pesa</h3>
+    <table id="payments"><thead><tr><th>ID</th><th>Utilizador</th><th>MSISDN</th><th>Montante</th><th>Estado local</th><th>Estado provedor</th><th>Ref. Debito</th><th>Ações</th></tr></thead><tbody></tbody></table>
   </div>
 </div>
 <script src="/js/api.js"></script>
@@ -62,14 +62,27 @@ async function processPayment(id,action){
   await loadAll();
 }
 
+async function refreshPayment(id){
+  const r=await apiFetch('/api/payments/'+id+'/refresh-status',{method:'POST',body:{}});
+  if(!r.ok) alert('Falha ao atualizar: '+(r.error||''));
+  await loadAll();
+}
+
 async function loadPayments(){
   const r = await apiFetch('/api/payments', { method:'GET' });
   const tb=document.querySelector('#payments tbody'); tb.innerHTML='';
   if (!r.ok) return;
   const fragment = document.createDocumentFragment();
-  r.payments.forEach(p=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${p.id}</td><td>${p.email||'-'}</td><td>${p.device_id||'-'}</td><td>${p.amount||'-'} ${p.currency||''}</td><td>${p.method||'-'}</td><td>${p.status}</td><td><button data-a="approve" data-id="${p.id}"><i class="fa-solid fa-check"></i></button> <button data-a="reject" data-id="${p.id}"><i class="fa-solid fa-xmark"></i></button></td>`; fragment.appendChild(tr); });
+  r.payments.forEach(p=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${p.id}</td><td>${p.user?.email||'-'}</td><td>${p.phoneMsisdn||'-'}</td><td>${p.amount||'-'} ${p.currency||''}</td><td>${p.status}</td><td>${p.providerStatus||'-'}</td><td>${p.debitoReference||'-'}</td><td><button data-a="refresh" data-id="${p.id}"><i class="fa-solid fa-arrows-rotate"></i></button> <button data-a="approve" data-id="${p.id}"><i class="fa-solid fa-check"></i></button> <button data-a="reject" data-id="${p.id}"><i class="fa-solid fa-xmark"></i></button></td>`;
+    fragment.appendChild(tr);
+  });
   tb.appendChild(fragment);
-  tb.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>processPayment(b.dataset.id,b.dataset.a)));
+  tb.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    if (b.dataset.a === 'refresh') return refreshPayment(b.dataset.id);
+    processPayment(b.dataset.id,b.dataset.a);
+  }));
 }
 
 async function loadAll(){ await Promise.all([loadOverview(), loadDevices(), loadPayments()]); }
