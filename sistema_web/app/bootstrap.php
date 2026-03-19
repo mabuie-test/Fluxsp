@@ -147,3 +147,54 @@ function record_metric(?string $deviceId, string $metricType, string $metricName
         // métricas não devem quebrar o fluxo principal
     }
 }
+
+
+function debito_config(): array {
+    global $config;
+    return $config['debito'] ?? [];
+}
+
+function debito_is_configured(): bool {
+    $cfg = debito_config();
+    return !empty($cfg['base_url']) && !empty($cfg['api_token']) && !empty($cfg['wallet_id']);
+}
+
+function debito_request(string $method, string $path, ?array $payload = null): array {
+    $cfg = debito_config();
+    if (!debito_is_configured()) {
+        throw new RuntimeException('debito_not_configured');
+    }
+
+    $url = rtrim((string)$cfg['base_url'], '/') . $path;
+    $ch = curl_init($url);
+    $headers = [
+        'Authorization: Bearer ' . $cfg['api_token'],
+        'Content-Type: application/json',
+        'Accept: application/json',
+    ];
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST => strtoupper($method),
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_TIMEOUT => 30,
+    ]);
+    if ($payload !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    }
+    $raw = curl_exec($ch);
+    if ($raw === false) {
+        $error = curl_error($ch);
+        curl_close($ch);
+        throw new RuntimeException('debito_request_failed:' . $error);
+    }
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    $decoded = json_decode($raw, true);
+    return [
+        'status' => $status,
+        'ok' => $status >= 200 && $status < 300,
+        'body' => is_array($decoded) ? $decoded : ['raw' => $raw],
+        'raw' => $raw,
+    ];
+}

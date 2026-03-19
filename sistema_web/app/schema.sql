@@ -116,3 +116,13 @@ CREATE TABLE IF NOT EXISTS system_metrics (
   INDEX idx_system_metrics_device_type (device_id, metric_type, created_at),
   INDEX idx_system_metrics_name (metric_name, created_at)
 );
+
+
+ALTER TABLE payments ADD COLUMN phone_msisdn VARCHAR(30) NULL;
+ALTER TABLE payments ADD COLUMN provider VARCHAR(50) NULL;
+ALTER TABLE payments ADD COLUMN provider_reference VARCHAR(100) NULL;
+ALTER TABLE payments ADD COLUMN provider_status VARCHAR(50) NULL;
+ALTER TABLE payments ADD COLUMN provider_payload_json JSON NULL;
+ALTER TABLE payments ADD COLUMN debito_reference VARCHAR(100) NULL;
+ALTER TABLE payments ADD COLUMN status_checked_at DATETIME NULL;
+ALTER TABLE payments MODIFY COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'MZN';

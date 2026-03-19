@@ -71,7 +71,15 @@ function normalize_payment(array $row): array {
     $row['_id'] = $row['id'] ?? null;
     $row['createdAt'] = $row['created_at'] ?? null;
     $row['processedAt'] = $row['processed_at'] ?? null;
+    $row['statusCheckedAt'] = $row['status_checked_at'] ?? null;
     $row['mediaFileId'] = $row['media_file_id'] ?? null;
+    $row['phoneMsisdn'] = $row['phone_msisdn'] ?? null;
+    $row['provider'] = $row['provider'] ?? null;
+    $row['providerReference'] = $row['provider_reference'] ?? null;
+    $row['providerStatus'] = $row['provider_status'] ?? null;
+    $row['debitoReference'] = $row['debito_reference'] ?? null;
+    $row['providerPayload'] = safe_json_decode($row['provider_payload_json'] ?? null) ?? null;
+    $row['refreshable'] = !empty($row['debito_reference']) && !in_array((string)($row['status'] ?? ''), ['completed', 'rejected'], true);
     if (isset($row['email']) || isset($row['name'])) {
         $row['user'] = [
             'email' => $row['email'] ?? null,
@@ -79,6 +87,51 @@ function normalize_payment(array $row): array {
         ];
     }
     return $row;
+}
+
+function map_debito_payment_status(?string $providerStatus): string {
+    $normalized = strtoupper(trim((string)$providerStatus));
+    if (in_array($normalized, ['COMPLETED', 'SUCCESS', 'SUCCEEDED', 'PAID'], true)) return 'completed';
+    if (in_array($normalized, ['FAILED', 'CANCELLED', 'CANCELED', 'REJECTED', 'EXPIRED'], true)) return 'rejected';
+    return 'pending';
+}
+
+function sync_payment_with_provider(array $payment): array {
+    if (empty($payment['debito_reference'])) return normalize_payment($payment);
+
+    $providerRes = debito_request('GET', '/api/v1/transactions/' . rawurlencode((string)$payment['debito_reference']) . '/status');
+    if (!$providerRes['ok']) {
+        throw new RuntimeException('debito_status_refresh_failed');
+    }
+    $body = $providerRes['body'];
+    $providerStatus = (string)($body['status'] ?? $payment['provider_status'] ?? 'PENDING');
+    $localStatus = map_debito_payment_status($providerStatus);
+
+    db()->beginTransaction();
+    try {
+        $up = db()->prepare('UPDATE payments SET status = ?, provider_status = ?, provider_reference = ?, provider_payload_json = ?, status_checked_at = NOW(), processed_at = CASE WHEN ? = "completed" THEN COALESCE(processed_at, NOW()) ELSE processed_at END WHERE id = ?');
+        $up->execute([
+            $localStatus,
+            $providerStatus,
+            $body['provider_reference'] ?? $payment['provider_reference'] ?? null,
+            json_encode($body),
+            $localStatus,
+            $payment['id'],
+        ]);
+
+        if ($localStatus === 'completed') {
+            $activate = db()->prepare('UPDATE users SET active = 1 WHERE id = ?');
+            $activate->execute([$payment['user_id']]);
+        }
+        db()->commit();
+    } catch (Throwable $e) {
+        if (db()->inTransaction()) db()->rollBack();
+        throw $e;
+    }
+
+    $st = db()->prepare('SELECT * FROM payments WHERE id = ? LIMIT 1');
+    $st->execute([$payment['id']]);
+    return normalize_payment($st->fetch() ?: $payment);
 }
 
 function find_support_session(string $sessionId): ?array {
@@ -686,17 +739,65 @@ try {
     }
 
     // Payments
-    if ($method === 'POST' && $uri === '/api/payments') {
+    if ($method === 'POST' && ($uri === '/api/payments/mpesa/initiate' || ($uri === '/api/payments' && strtolower(trim((string)($body['method'] ?? ''))) === 'mpesa'))) {
         $u = auth_user();
-        $ins = db()->prepare('INSERT INTO payments(user_id, amount, method, note, media_file_id, status) VALUES(?,?,?,?,?,"pending")');
-        $ins->execute([$u['id'], $body['amount'] ?? null, $body['method'] ?? null, $body['note'] ?? null, $body['mediaFileId'] ?? null]);
-        json_response(['ok' => true, 'id' => (string) db()->lastInsertId()]);
+        if (!debito_is_configured()) json_response(['ok' => false, 'error' => 'debito_not_configured'], 503);
+
+        $msisdn = preg_replace('/\D+/', '', (string)($body['msisdn'] ?? ''));
+        $amount = isset($body['amount']) ? (float)$body['amount'] : 0;
+        $referenceDescription = trim((string)($body['referenceDescription'] ?? $body['reference_description'] ?? 'Pagamento mensal'));
+        $note = trim((string)($body['note'] ?? ''));
+        if ($msisdn === '' || $amount < 1 || $referenceDescription === '') {
+            json_response(['ok' => false, 'error' => 'invalid_request'], 400);
+        }
+
+        $cfg = debito_config();
+        $payload = [
+            'msisdn' => $msisdn,
+            'amount' => $amount,
+            'reference_description' => substr($referenceDescription, 0, 100),
+        ];
+        if (!empty($cfg['callback_url'])) $payload['callback_url'] = $cfg['callback_url'];
+
+        $providerRes = debito_request('POST', '/api/v1/wallets/' . rawurlencode((string)$cfg['wallet_id']) . '/c2b/mpesa', $payload);
+        if (!$providerRes['ok']) {
+            json_response(['ok' => false, 'error' => 'debito_request_failed', 'provider' => $providerRes['body']], 502);
+        }
+
+        $providerBody = $providerRes['body'];
+        $providerStatus = (string)($providerBody['status'] ?? 'PENDING');
+        $localStatus = map_debito_payment_status($providerStatus);
+        $ins = db()->prepare('INSERT INTO payments(user_id, amount, currency, method, note, status, phone_msisdn, provider, provider_reference, provider_status, provider_payload_json, debito_reference) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
+        $ins->execute([
+            $u['id'],
+            $amount,
+            'MZN',
+            'mpesa',
+            $note !== '' ? $note : $referenceDescription,
+            $localStatus,
+            $msisdn,
+            'debito',
+            $providerBody['provider_reference'] ?? null,
+            $providerStatus,
+            json_encode($providerBody),
+            $providerBody['debito_reference'] ?? null,
+        ]);
+
+        if ($localStatus === 'completed') {
+            $activate = db()->prepare('UPDATE users SET active = 1 WHERE id = ?');
+            $activate->execute([$u['id']]);
+        }
+
+        $paymentId = (string)db()->lastInsertId();
+        $st = db()->prepare('SELECT * FROM payments WHERE id = ? LIMIT 1');
+        $st->execute([$paymentId]);
+        json_response(['ok' => true, 'payment' => normalize_payment($st->fetch() ?: ['id' => $paymentId]), 'provider' => $providerBody]);
     }
 
     if ($method === 'GET' && $uri === '/api/payments') {
         require_admin();
-        $rows = array_map('normalize_payment', db()->query('SELECT p.*, u.email, u.name FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC')->fetchAll());
-        json_response(['ok' => true, 'payments' => $rows]);
+        $rows = db()->query('SELECT p.*, u.email, u.name FROM payments p JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC')->fetchAll();
+        json_response(['ok' => true, 'payments' => array_map('normalize_payment', $rows)]);
     }
 
     if ($method === 'GET' && $uri === '/api/payments/mine') {
@@ -704,6 +805,17 @@ try {
         $st = db()->prepare('SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC');
         $st->execute([$u['id']]);
         json_response(['ok' => true, 'payments' => array_map('normalize_payment', $st->fetchAll())]);
+    }
+
+    if ($method === 'POST' && ($m = route_match('/api/payments/:id/refresh-status', $uri))) {
+        $u = auth_user();
+        $st = db()->prepare('SELECT * FROM payments WHERE id = ? LIMIT 1');
+        $st->execute([$m['id']]);
+        $payment = $st->fetch();
+        if (!$payment) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!is_admin($u) && (string)$payment['user_id'] !== (string)$u['id']) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+        $synced = sync_payment_with_provider($payment);
+        json_response(['ok' => true, 'payment' => $synced]);
     }
 
     if ($method === 'POST' && ($m = route_match('/api/payments/:id/process', $uri))) {
@@ -946,6 +1058,11 @@ try {
     json_response(['error' => 'not_found'], 404);
 } catch (RuntimeException $e) {
     if ($e->getMessage() === 'db_unavailable') json_response(['ok' => false, 'error' => 'db_unavailable'], 503);
+    if ($e->getMessage() === 'debito_not_configured') json_response(['ok' => false, 'error' => 'debito_not_configured'], 503);
+    if ($e->getMessage() === 'debito_status_refresh_failed') json_response(['ok' => false, 'error' => 'debito_status_refresh_failed'], 502);
+    if (str_starts_with($e->getMessage(), 'debito_request_failed:')) {
+        json_response(['ok' => false, 'error' => 'debito_request_failed', 'details' => substr($e->getMessage(), strlen('debito_request_failed:'))], 502);
+    }
     json_response(['ok' => false, 'error' => 'server_error'], 500);
 } catch (Throwable $e) {
     json_response(['ok' => false, 'error' => 'server_error'], 500);
