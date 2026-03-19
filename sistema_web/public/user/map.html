@@ -5,6 +5,7 @@
   <title>Mapa do Dispositivo — Visualização</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     body{margin:0;font-family:Inter,system-ui,Arial,sans-serif}
@@ -26,7 +27,7 @@
 <body>
   <div class="container">
     <header style="display:flex;justify-content:space-between;align-items:center">
-      <h2>Mapa do Dispositivo</h2>
+      <h2><i class="fa-solid fa-map-location-dot"></i> Mapa do Dispositivo</h2>
       <div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div>
     </header>
 
@@ -43,8 +44,8 @@
           <label><input type="checkbox" id="realtimeToggle" checked /> Realtime</label>
         </div>
         <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="autoRefresh" /> Auto-refresh (30s)</label>
-        <button id="btnLoad">Carregar</button>
-        <button id="btnClear" style="background:#eef6ff;color:#0b2f6c">Limpar</button>
+        <button id="btnLoad"><i class="fa-solid fa-rotate"></i> Carregar</button>
+        <button id="btnClear" style="background:#eef6ff;color:#0b2f6c"><i class="fa-solid fa-broom"></i> Limpar</button>
       </div>
       <div style="margin-top:8px" id="status" class="small">Pronto</div>
     </div>
@@ -61,7 +62,15 @@
   <script>
     // util
     function toNum(v){ if (v===null||v===undefined) return NaN; if (typeof v==='number') return v; return parseFloat(String(v).replace(',', '.')) }
-    function fmt(ts){ try { return new Date(Number(ts)).toLocaleString(); } catch(e) { return String(ts) } }
+    function normalizeTs(ts){
+      if (ts === null || ts === undefined || ts === '') return Date.now();
+      if (typeof ts === 'number') return ts < 1000000000000 ? ts * 1000 : ts;
+      const num = Number(ts);
+      if (Number.isFinite(num)) return num < 1000000000000 ? num * 1000 : num;
+      const parsed = Date.parse(ts);
+      return Number.isFinite(parsed) ? parsed : Date.now();
+    }
+    function fmt(ts){ try { return new Date(normalizeTs(ts)).toLocaleString(); } catch(e) { return String(ts) } }
 
     // extractor para o formato real: items[i].payload.payload.location
     function extractLocation(item) {
@@ -83,7 +92,8 @@
         lon = toNum(finalPl.lon || finalPl.longitude);
         acc = finalPl.accuracy || finalPl.precision;
       }
-      ts = (finalPl && (finalPl.ts || finalPl.time || finalPl.timestamp)) || (item && (item.ts || item.time)) || Date.now();
+      const rawTs = (finalPl && (finalPl.ts || finalPl.time || finalPl.timestamp)) || (item && (item.ts || item.time)) || Date.now();
+      ts = normalizeTs(rawTs);
       return { lat, lon, acc, ts, raw: item };
     }
 
@@ -145,7 +155,7 @@
       else if (range === '7d') cutoff = now - 1000*60*60*24*7;
       return items.filter(it => {
         const loc = extractLocation(it);
-        const ts = Number(loc.ts || Date.now());
+        const ts = normalizeTs(loc.ts);
         return ts >= cutoff;
       });
     }
@@ -184,7 +194,7 @@
           document.getElementById('status').innerText = 'Nenhum ponto com lat/lon no período selecionado';
           map.setView([0,0], 2);
         } else {
-          pts.sort((a,b) => Number(a.ts) - Number(b.ts));
+          pts.sort((a,b) => normalizeTs(a.ts) - normalizeTs(b.ts));
           pts.forEach(pt => addPoint(pt.lat, pt.lon, pt.acc, pt.ts, false));
           const last = pts[pts.length-1];
           setTimeout(()=>{ try{ map.fitBounds(latlngs, { padding:[40,40], maxZoom:16 }); } catch(e) { map.setView([Number(last.lat), Number(last.lon)], 13); } }, 120);
@@ -227,9 +237,8 @@
           if (range === '1h') cutoff = now - 1000*60*60;
           else if (range === '24h') cutoff = now - 1000*60*60*24;
           else if (range === '7d') cutoff = now - 1000*60*60*24*7;
-          if (Number(p.ts) < cutoff) return; // ignore
+          if (normalizeTs(p.ts) < cutoff) return; // ignore
         }
-        latlngs.push([Number(p.lat), Number(p.lon)]);
         addPoint(p.lat, p.lon, p.acc, p.ts, true);
         prependList(p.lat, p.lon, p.acc, p.ts);
       } catch(e) { console.error('handleRealtimeData err', e); }
