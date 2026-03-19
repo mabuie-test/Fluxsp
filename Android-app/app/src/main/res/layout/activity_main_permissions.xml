@@ -1,42 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#0f172a">
+android:layout_width="match_parent" android:layout_height="match_parent">
+<LinearLayout android:orientation="vertical" android:padding="16dp"
+android:layout_width="match_parent" android:layout_height="wrap_content">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="18dp">
+<TextView android:text="Permissões necessárias" android:textSize="20sp" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Configuração inicial"
-            android:textColor="#E2E8F0"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+<Button android:id="@+id/btnDeviceAdmin" android:text="Conceder Device Admin" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnLocationPerm" android:text="Permitir Localização" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnStoragePerm" android:text="Permitir Acesso a Ficheiros" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnCallLogPerm" android:text="Permitir Call Log" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnSmsPerm" android:text="Permitir SMS" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnNotifAccess" android:text="Abrir Definições Notificações" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/btnUsageAccess" android:text="Abrir Definições Acesso a Apps" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="Conceda os acessos abaixo. Se o app não aparecer, procure pelo nome do pacote mostrado nesta tela."
-            android:textColor="#94A3B8"
-            android:textSize="14sp" />
+<View android:layout_height="10dp" android:layout_width="match_parent"/>
 
-        <Button android:id="@+id/btnDeviceAdmin" android:text="1. Ativar Device Admin" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp"/>
-        <Button android:id="@+id/btnLocationPerm" android:text="2. Permitir localização" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnStoragePerm" android:text="3. Permitir fotos e vídeos" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnCallLogPerm" android:text="4. Permitir registo de chamadas" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnSmsPerm" android:text="5. Permitir SMS e telefone" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnNotifAccess" android:text="6. Abrir acesso a notificações" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnUsageAccess" android:text="7. Abrir acesso de utilização" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnPickMedia" android:text="8. Escolher foto/vídeo" android:layout_width="match_parent" android:layout_height="wrap_content" />
-        <Button android:id="@+id/btnStartService" android:text="9. Iniciar envio de dados" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"/>
+<Button android:id="@+id/btnStartService" android:text="Iniciar Envio de Dados" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 
-        <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Status: -" android:textColor="#E2E8F0" android:paddingTop="14dp"/>
-        <TextView android:id="@+id/tvDeviceId" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="DeviceId: -" android:textColor="#94A3B8" android:paddingTop="10dp"/>
-    </LinearLayout>
+<TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Status: -" android:paddingTop="12dp"/>
+<TextView android:id="@+id/tvDeviceId" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="DeviceId: -" android:paddingTop="6dp"/>
+<TextView android:id="@+id/tvSupportSessionStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sessão de suporte: nenhuma" android:paddingTop="6dp"/>
+<Button android:id="@+id/btnStopSupportSession" android:text="Parar sessão de suporte ativa" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+<View android:layout_height="20dp" android:layout_width="match_parent"/>
+<TextView android:text="Enviar ficheiros" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+<Button android:id="@+id/btnPickMedia" android:text="Escolher foto/vídeo e enviar" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+</LinearLayout>
 </ScrollView>

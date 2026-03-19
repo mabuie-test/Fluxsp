@@ -3,33 +3,30 @@ package com.company.devicemgr.services;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.net.Uri;
-import android.net.ConnectivityManager;
-import android.net.NetworkCapabilities;
-import android.net.NetworkInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.provider.MediaStore;
-import android.os.BatteryManager;
-import android.telephony.TelephonyManager;
 import android.util.Log;
 
+import com.company.devicemgr.activities.SessionApprovalActivity;
 import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.services.CallRecordingService;
+import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.HttpClient;
-import com.company.devicemgr.utils.DeviceIdentity;
+import com.company.devicemgr.utils.SupportSessionApi;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -54,6 +51,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_SENT_CALL_KEYS = "sent_call_keys";
     private static final String KEY_SENT_SMS_KEYS = "sent_sms_keys";
     private static final String KEY_UPLOADED_MEDIA_HASHES = "uploaded_media_hashes";
+    private static final String KEY_LAST_PROMPTED_SUPPORT_SESSION_ID = "last_prompted_support_session_id";
 
     private LocationManager locationManager;
     private volatile Location lastLocation = null;
@@ -103,6 +101,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 try {
                     flushPendingEvents(60);
                     sendTelemetryOnce();
+                    syncSupportSessions();
 
                     // revarre periodicamente SMS/chamadas para capturar eventos após término e enviar quando voltar internet
                     if ((loops % 2) == 0) {
@@ -234,56 +233,98 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         }
     }
 
-    private JSONObject collectStatus() {
-        JSONObject st = new JSONObject();
-        try {
-            IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
-            Intent batteryStatus = registerReceiver(null, ifilter);
-            if (batteryStatus != null) {
-                int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-                int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-                int pct = (level >= 0 && scale > 0) ? Math.round((level * 100f) / scale) : -1;
-                if (pct >= 0) st.put("batteryLevel", pct);
-            }
-        } catch (Exception ignored) { }
+    private void syncSupportSessions() {
+        String token = currentToken();
+        if (token == null || token.length() == 0) return;
 
         try {
-            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-            String networkType = "unknown";
-            if (cm != null) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    NetworkCapabilities caps = cm.getNetworkCapabilities(cm.getActiveNetwork());
-                    if (caps != null) {
-                        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) networkType = "wifi";
-                        else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) networkType = "cellular";
-                        else if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) networkType = "ethernet";
-                    }
-                } else {
-                    NetworkInfo info = cm.getActiveNetworkInfo();
-                    if (info != null && info.isConnected()) networkType = info.getTypeName();
-                }
+            JSONObject pending = SupportSessionApi.getPendingSession(this);
+            if (pending != null && pending.optString("sessionId", "").length() > 0) {
+                promptSupportSessionIfNeeded(pending);
             }
-            st.put("networkType", networkType);
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            Log.e(TAG, "pending support session sync err", e);
+        }
 
         try {
-            TelephonyManager tm = (TelephonyManager) getSystemService(TELEPHONY_SERVICE);
-            if (tm != null) {
-                String carrier = tm.getNetworkOperatorName();
-                if (carrier != null && carrier.length() > 0) st.put("carrier", carrier);
-                st.put("signalLevel", -1);
+            JSONObject active = SupportSessionApi.getActiveSession(this);
+            SharedPreferences sp = prefs();
+            if (active != null && active.optString("sessionId", "").length() > 0) {
+                sp.edit().putString("active_support_session_json", active.toString()).apply();
+            } else {
+                sp.edit().remove("active_support_session_json").apply();
             }
-        } catch (Exception ignored) { }
-        return st;
+            AppRuntime.syncSupportSessionIndicator(this);
+        } catch (Exception e) {
+            Log.e(TAG, "active support session sync err", e);
+        }
     }
 
-    private JSONObject collectDeviceMeta() {
-        JSONObject d = new JSONObject();
+    private void promptSupportSessionIfNeeded(JSONObject session) {
+        String sessionId = session.optString("sessionId", "");
+        if (sessionId.length() == 0) return;
+        SharedPreferences sp = prefs();
+        String lastPrompted = sp.getString(KEY_LAST_PROMPTED_SUPPORT_SESSION_ID, null);
+        if (sessionId.equals(lastPrompted)) return;
+
+        sp.edit().putString(KEY_LAST_PROMPTED_SUPPORT_SESSION_ID, sessionId).apply();
+        showSupportRequestNotification(session);
         try {
-            d.put("imei", DeviceIdentity.getImeiOrFallback(this));
-            d.put("model", DeviceIdentity.getModel());
-        } catch (Exception ignored) { }
-        return d;
+            JSONObject metadata = new JSONObject();
+            metadata.put("requestType", session.optString("requestType"));
+            SupportSessionApi.logEvent(this, sessionId, "prompt_shown", metadata);
+        } catch (Exception e) {
+            Log.e(TAG, "support prompt event err", e);
+        }
+
+        try {
+            Intent intent = new Intent(this, SessionApprovalActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            intent.putExtra(SessionApprovalActivity.EXTRA_SESSION_ID, sessionId);
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUEST_TYPE, session.optString("requestType"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUESTED_AT, session.optString("requestedAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_DEADLINE_AT, session.optString("responseDeadlineAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_NOTE, session.optString("note"));
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "unable to launch support approval UI", e);
+        }
+    }
+
+    private void showSupportRequestNotification(JSONObject session) {
+        try {
+            Intent intent = new Intent(this, SessionApprovalActivity.class);
+            intent.putExtra(SessionApprovalActivity.EXTRA_SESSION_ID, session.optString("sessionId"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUEST_TYPE, session.optString("requestType"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_REQUESTED_AT, session.optString("requestedAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_DEADLINE_AT, session.optString("responseDeadlineAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_NOTE, session.optString("note"));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+            PendingIntent pi = PendingIntent.getActivity(
+                    this,
+                    82,
+                    intent,
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                            ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                            : PendingIntent.FLAG_UPDATE_CURRENT
+            );
+
+            Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? new Notification.Builder(this, CHANNEL_ID)
+                    : new Notification.Builder(this);
+
+            builder.setContentTitle("Pedido de sessão de suporte")
+                    .setContentText("Toque para aprovar ou rejeitar um pedido de " + ("ambient_audio".equals(session.optString("requestType")) ? "áudio" : "ecrã"))
+                    .setSmallIcon(android.R.drawable.stat_notify_more)
+                    .setContentIntent(pi)
+                    .setAutoCancel(true);
+
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null) nm.notify(82, builder.build());
+        } catch (Exception e) {
+            Log.e(TAG, "showSupportRequestNotification err", e);
+        }
     }
 
     private void sendTelemetryOnce() {
@@ -317,8 +358,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     payload.put("note", "no_location");
                 }
             }
-            payload.put("status", collectStatus());
-            payload.put("device", collectDeviceMeta());
             payload.put("ts", System.currentTimeMillis());
             sendOrQueue("telemetry", payload);
         } catch (Exception e) {
@@ -337,8 +376,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 loc.put("lon", location.getLongitude());
                 loc.put("accuracy", location.getAccuracy());
                 payload.put("location", loc);
-                payload.put("status", collectStatus());
-                payload.put("device", collectDeviceMeta());
                 payload.put("ts", System.currentTimeMillis());
                 sendOrQueue("telemetry", payload);
             } catch (Exception e) {

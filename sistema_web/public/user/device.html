@@ -1,67 +1,201 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8"/><title>Aparelho</title>
+  <meta charset="utf-8"/><title>My Device</title>
   <link rel="stylesheet" href="/css/styles.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    #map{height:420px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .actions button{width:auto}
+    .small{font-size:.9em;color:#666}
+  </style>
 </head>
 <body>
-<div class="container">
-  <header class="page-header">
-    <div>
-      <h1><i class="fa-solid fa-mobile-screen"></i> Detalhes do aparelho</h1>
-      <p class="small">Estado técnico e última atividade do dispositivo.</p>
-    </div>
-    <div><a class="btn-link" href="/user/dashboard.html"><i class="fa-solid fa-arrow-left"></i> Voltar</a> <button id="logout"><i class="fa-solid fa-right-from-bracket"></i> Logout</button></div>
-  </header>
+  <div class="container">
+    <header style="display:flex;justify-content:space-between">
+      <h1>My Device</h1>
+      <div><a href="/user/dashboard.html">Back</a> <button id="logout">Logout</button></div>
+    </header>
 
-  <div class="card" id="deviceInfo">Carregando...</div>
-  <div class="card">
-    <h3><i class="fa-solid fa-clock-rotate-left"></i> Última telemetria</h3>
-    <pre id="history" style="white-space:pre-wrap"></pre>
+    <div class="card" id="deviceInfo">Loading...</div>
+    <div class="card">
+      <h3>Sessões de suporte</h3>
+      <p class="small">Cada pedido é mostrado localmente no Android. O utilizador precisa aprovar manualmente cada sessão e pode encerrá-la a qualquer momento.</p>
+      <div class="actions">
+        <button id="btnRequestScreen">Pedir partilha de ecrã</button>
+        <button id="btnRequestAudio">Pedir áudio temporário</button>
+        <button id="btnStopSession">Parar sessão ativa</button>
+      </div>
+      <input id="supportNote" placeholder="Motivo/nota para o pedido" />
+      <div class="actions">
+        <label>Prazo resposta (s): <input id="responseTtlSeconds" type="number" min="30" max="600" value="120" /></label>
+        <label>Duração sessão (s): <input id="sessionTtlSeconds" type="number" min="60" max="3600" value="600" /></label>
+      </div>
+      <p id="supportMsg" class="small"></p>
+      <div id="activeSupport" class="small">A carregar estado...</div>
+      <ul id="supportHistory" style="padding-left:20px"></ul>
+      <h4>Eventos da última sessão</h4>
+      <ul id="supportEvents" style="padding-left:20px"></ul>
+    </div>
+    <div id="map" class="card"></div>
+    <div class="card">
+      <h3>History</h3>
+      <ul id="historyList" style="list-style:none;padding-left:0"></ul>
+    </div>
   </div>
-</div>
-<script src="/js/api.js"></script>
-<script>
-const params = new URLSearchParams(window.location.search);
-const deviceId = params.get('deviceId');
-if (!deviceId) location.href='/user/dashboard.html';
 
-document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
+  <script src="/js/api.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const deviceId = params.get('deviceId');
+    if (!deviceId) { alert('deviceId missing'); location.href='/user/dashboard.html'; }
+    if (!localStorage.getItem('auth_token')) { location.href='/'; }
 
-async function load(){
-  const [d, h] = await Promise.all([
-    apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' }),
-    apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/history', { method:'GET' })
-  ]);
+    async function loadDevice(){
+      const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' });
+      const el = document.getElementById('deviceInfo');
+      if (!r.ok) { el.innerText = 'Erro: ' + (r.error || JSON.stringify(r)); return; }
+      const d = r.device;
+      el.innerHTML = `<strong>DeviceId:</strong> ${d.deviceId} <br>
+                      <strong>Name:</strong> ${d.name || '-'} <br>
+                      <strong>Last seen:</strong> ${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'}`;
+    }
 
-  const el = document.getElementById('deviceInfo');
-  if (!d.ok) { el.textContent = 'Erro: ' + (d.error || ''); return; }
-  const x = d.device;
-  el.innerHTML = `
-    <div class="metric-list">
-      <div><strong>DeviceId:</strong> ${x.deviceId}</div>
-      <div><strong>IMEI:</strong> ${x.imei || '-'}</div>
-      <div><strong>Modelo:</strong> ${x.model || '-'}</div>
-      <div><strong>Online:</strong> ${x.isOnline ? 'Sim' : 'Não'}</div>
-      <div><strong>Última vez online:</strong> ${x.lastOnlineAt ? new Date(x.lastOnlineAt).toLocaleString() : '-'}</div>
-      <div><strong>Bateria:</strong> ${x.batteryLevel ?? '-'}</div>
-      <div><strong>Rede:</strong> ${x.networkType || '-'} / ${x.carrier || '-'}</div>
-      <div><strong>Sinal:</strong> ${x.signalLevel ?? '-'}</div>
-      <div><strong>Subscrição:</strong> ${x.subscriptionStatus} até ${x.subscriptionUntil ? new Date(x.subscriptionUntil).toLocaleString() : '-'}</div>
-    </div>
-  `;
+    async function loadHistory(){
+      const r = await apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/history', { method:'GET' });
+      const ul = document.getElementById('historyList');
+      ul.innerHTML = '';
+      if (!r.ok) { ul.innerHTML = '<li>Erro: ' + (r.error || JSON.stringify(r)) + '</li>'; return []; }
+      r.items.forEach(item => {
+        const li = document.createElement('li');
+        const ts = new Date(item.ts).toLocaleString();
+        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small class="small">${ts}</small><div>${JSON.stringify(item.payload)}</div></div>`;
+        ul.appendChild(li);
+      });
+      return r.items;
+    }
 
-  const history = document.getElementById('history');
-  if (!h.ok) {
-    history.textContent = h.error === 'subscription_required'
-      ? 'Subscrição inativa. Faça o pagamento mensal de 800 MZN para liberar os dados.'
-      : 'Erro ao carregar histórico';
-    return;
-  }
-  history.textContent = JSON.stringify(h.items.slice(0, 10), null, 2);
-}
-load();
-</script>
+    async function requestSupport(requestType) {
+      const responseTtlSeconds = Number(document.getElementById('responseTtlSeconds').value || 120);
+      const sessionTtlSeconds = Number(document.getElementById('sessionTtlSeconds').value || 600);
+      const note = document.getElementById('supportNote').value.trim();
+      const res = await apiFetch('/api/support-sessions/request', {
+        method:'POST',
+        body: {
+          deviceId,
+          requestType,
+          responseTtlSeconds,
+          sessionTtlSeconds,
+          note
+        }
+      });
+      document.getElementById('supportMsg').textContent = res.ok
+        ? 'Pedido enviado. Aguarde a aprovação local no dispositivo.'
+        : 'Erro ao criar pedido: ' + (res.error || JSON.stringify(res));
+      await loadSupportState();
+    }
+
+    async function stopSupportSession(sessionId) {
+      if (!sessionId) return;
+      const res = await apiFetch('/api/support-sessions/' + encodeURIComponent(sessionId) + '/stop', { method:'POST', body:{} });
+      document.getElementById('supportMsg').textContent = res.ok
+        ? 'Sessão parada.'
+        : 'Erro ao parar sessão: ' + (res.error || JSON.stringify(res));
+      await loadSupportState();
+    }
+
+    async function loadSupportEvents(sessionId) {
+      const ul = document.getElementById('supportEvents');
+      ul.innerHTML = '';
+      if (!sessionId) { ul.innerHTML = '<li>Sem eventos.</li>'; return; }
+      const res = await apiFetch('/api/support-sessions/' + encodeURIComponent(sessionId) + '/events', { method:'GET' });
+      const events = res.ok ? res.events : [];
+      events.forEach(event => {
+        const li = document.createElement('li');
+        const metadata = Object.keys(event.metadata || {}).length ? ' — ' + JSON.stringify(event.metadata) : '';
+        li.textContent = `${new Date(event.createdAt).toLocaleString()} — ${event.eventType}${metadata}`;
+        ul.appendChild(li);
+      });
+      if (!events.length) ul.innerHTML = '<li>Sem eventos.</li>';
+    }
+
+    function renderSupportHistory(sessions) {
+      const ul = document.getElementById('supportHistory');
+      ul.innerHTML = '';
+      sessions.forEach(session => {
+        const li = document.createElement('li');
+        const note = session.note ? ` — ${session.note}` : '';
+        li.textContent = `${new Date(session.requestedAt).toLocaleString()} — ${session.requestType} — ${session.status}${note}`;
+        ul.appendChild(li);
+      });
+      if (!sessions.length) ul.innerHTML = '<li>Sem sessões recentes.</li>';
+    }
+
+    async function loadSupportState() {
+      const activeRes = await apiFetch('/api/support-sessions/device/' + encodeURIComponent(deviceId) + '/active', { method:'GET' });
+      const listRes = await apiFetch('/api/support-sessions/device/' + encodeURIComponent(deviceId) + '/list', { method:'GET' });
+      const activeEl = document.getElementById('activeSupport');
+      const stopBtn = document.getElementById('btnStopSession');
+      stopBtn.onclick = null;
+
+      if (activeRes.ok && activeRes.session) {
+        const s = activeRes.session;
+        activeEl.textContent = `Sessão ativa: ${s.requestType} até ${new Date(s.sessionExpiresAt).toLocaleString()}.`;
+        stopBtn.disabled = false;
+        stopBtn.onclick = () => stopSupportSession(s.sessionId);
+      } else {
+        activeEl.textContent = 'Nenhuma sessão ativa.';
+        stopBtn.disabled = true;
+      }
+
+      const sessions = listRes.ok ? listRes.sessions : [];
+      renderSupportHistory(sessions);
+      await loadSupportEvents((activeRes.ok && activeRes.session ? activeRes.session.sessionId : (sessions[0] && sessions[0].sessionId)));
+    }
+
+    let map, marker;
+    function initMap(lat=0, lon=0) {
+      if (!map) {
+        map = L.map('map').setView([lat, lon], lat===0&&lon===0?2:13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        marker = L.marker([lat, lon]).addTo(map);
+      } else {
+        map.setView([lat, lon], 13);
+        marker.setLatLng([lat, lon]);
+      }
+    }
+
+    (async function(){
+      document.getElementById('btnRequestScreen').addEventListener('click', () => requestSupport('screen'));
+      document.getElementById('btnRequestAudio').addEventListener('click', () => requestSupport('ambient_audio'));
+      document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
+
+      await loadDevice();
+      await loadSupportState();
+      const items = await loadHistory();
+      if (items && items.length>0) {
+        const first = items[0];
+        const loc = first.payload && first.payload.location;
+        if (loc && loc.lat && loc.lon) initMap(loc.lat, loc.lon);
+        else initMap(0,0);
+      } else initMap(0,0);
+
+      const socket = io();
+      socket.emit('join_device_room', deviceId);
+      socket.on('telemetry', (data) => {
+        if (data && data.payload && data.payload.location) {
+          const loc = data.payload.location;
+          initMap(loc.lat, loc.lon);
+          const ul = document.getElementById('historyList');
+          const li = document.createElement('li');
+          li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small class="small">${new Date(data.ts).toLocaleString()}</small><div>${JSON.stringify(data.payload)}</div></div>`;
+          ul.insertBefore(li, ul.firstChild);
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

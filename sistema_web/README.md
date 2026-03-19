@@ -6,12 +6,6 @@ Estrutura unificada:
 - `storage/media/`: ficheiros de media enviados pelo app.
 
 ## Configuração
-Use o ficheiro `.env.example` como base:
-
-```bash
-cp .env.example .env
-```
-
 Defina variáveis de ambiente:
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
 - `JWT_SECRET`
@@ -21,29 +15,12 @@ Defina variáveis de ambiente:
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`
   - `MAIL_FROM`, `MAIL_FROM_NAME`
 
-## Criar base de dados (schema.sql)
-Após configurar o `.env`, importe o schema:
-
-```bash
-mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" < app/schema.sql
-```
-
-> Se `DB_PASS` estiver vazio, use o comando sem `-p"$DB_PASS"`.
-
 ## Executar localmente
 ```bash
 php -S 0.0.0.0:3000 -t public
 ```
 
-## Dependências PHP (Composer)
-Instale as dependências a partir da pasta `sistema_web`:
-
-```bash
-composer install
-```
-
-Se precisar atualizar ou adicionar manualmente o PHPMailer:
-
+## Dependência de email (PHPMailer)
 ```bash
 composer require phpmailer/phpmailer
 ```
@@ -66,29 +43,13 @@ composer require phpmailer/phpmailer
 - Validação de acesso por owner/admin para endpoints sensíveis de device, telemetry e media.
 - Operação de processamento de pagamentos com transação no banco.
 
+## Associação automática do dispositivo
+- A app Android faz associação automática do `deviceId` ao utilizador no login via `POST /api/devices/auto-assign`.
+- O painel web deixa de depender de reivindicação manual do aparelho.
+- A app usa um identificador estável do Android para evitar que o mesmo aparelho seja adicionado várias vezes.
 
-## Novo fluxo de alocação e subscrição
-- O aparelho é alocado automaticamente ao utilizador autenticado via `POST /api/devices/auto-assign` usando **IMEI** (sem reivindicação manual).
-- O IMEI é único no sistema para impedir duplicação do mesmo aparelho.
-- A plataforma guarda e exibe metadados: **modelo, rede, operadora, nível de bateria, nível de sinal, estado online e última vez online**.
-- O acesso aos dados de telemetria/media para utilizadores normais é liberado apenas com subscrição ativa por aparelho.
-
-## Pagamento M-Pesa automático
-- Endpoint: `POST /api/payments/mpesa/checkout`
-- Valor fixo por aparelho: **800 MZN / 30 dias**
-- Campos esperados no body JSON:
-  - `deviceId`
-  - `msisdn`
-- Em aprovação automática, a subscrição do aparelho é estendida por 30 dias.
-
-## Administração robusta
-- Novo endpoint para painel admin: `GET /api/admin/overview`
-- Retorna: total de utilizadores/aparelhos, online, subscrições ativas, receita mensal e lista de subscrições a expirar.
-
-
-## Correções e desempenho adicionais
-- A activity de permissões no Android agora mostra o nome do pacote e verifica visualmente se o **Acesso de utilização** e o **Acesso a notificações** foram concedidos.
-- O manifesto Android passou a declarar `PACKAGE_USAGE_STATS`, melhorando a descoberta do app na tela de definições de uso.
-- O frontend web foi otimizado com carregamentos paralelos (`Promise.all`) nas principais páginas do painel.
-- O banco recebeu índices adicionais para consultas de aparelhos, subscrições e pagamentos.
-- A funcionalidade de transmissão remota da tela em tempo real **não foi adicionada**, por envolver vigilância altamente sensível; mantive apenas uma área informativa no painel.
+## Sessões de suporte aprovadas localmente
+- O backend pode criar um pedido de sessão temporária para `screen` ou `ambient_audio` via `POST /api/support-sessions/request`.
+- A app Android consulta pedidos pendentes, mostra um pedido local ao utilizador e exige aprovação manual em cada sessão.
+- Sessões aprovadas expiram automaticamente, ficam visíveis com notificação persistente e podem ser interrompidas a qualquer momento pela app ou pelo painel.
+- O painel pode enviar nota/motivo, timeout de resposta e duração da sessão; o backend também guarda eventos de auditoria por sessão em `support_session_events`.

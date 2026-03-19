@@ -10,8 +10,8 @@ import android.widget.EditText;
 import android.widget.Toast;
 
 import com.company.devicemgr.utils.AppRuntime;
-import com.company.devicemgr.utils.HttpClient;
 import com.company.devicemgr.utils.DeviceIdentity;
+import com.company.devicemgr.utils.HttpClient;
 
 import org.json.JSONObject;
 
@@ -33,6 +33,7 @@ public class LoginActivity extends Activity {
         String token = sp.getString("auth_token", null);
         if (token != null && token.length() > 10) {
             AppRuntime.ensureTelemetryStarted(this);
+            AppRuntime.syncSupportSessionIndicator(this);
             startActivity(new Intent(LoginActivity.this, MainPermissionsActivity.class));
             finish();
             return;
@@ -64,32 +65,28 @@ public class LoginActivity extends Activity {
                             final String role = jo.optString("role", "user");
 
                             SharedPreferences sp1 = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
-                            String currentDeviceId = sp1.getString("deviceId", "");
-                            String imei = DeviceIdentity.getImeiOrFallback(LoginActivity.this);
-                            String model = DeviceIdentity.getModel();
+                            String deviceId = sp1.getString("deviceId", null);
+                            if (deviceId == null || deviceId.length() == 0) {
+                                deviceId = DeviceIdentity.getStableDeviceId(LoginActivity.this);
+                                sp1.edit().putString("deviceId", deviceId).apply();
+                            }
+
                             try {
                                 JSONObject assignBody = new JSONObject();
-                                assignBody.put("imei", imei);
-                                assignBody.put("model", model);
-                                assignBody.put("deviceId", currentDeviceId);
+                                assignBody.put("deviceId", deviceId);
                                 String assignUrl = com.company.devicemgr.utils.ApiConfig.api("/api/devices/auto-assign");
-                                String assignRes = HttpClient.postJson(assignUrl, assignBody.toString(), token1);
-                                JSONObject assignJo = new JSONObject(assignRes);
-                                if (assignJo.optBoolean("ok") && assignJo.has("device")) {
-                                    JSONObject dev = assignJo.getJSONObject("device");
-                                    currentDeviceId = dev.optString("deviceId", currentDeviceId);
-                                }
-                            } catch (Exception ignored) { }
-
-                            if (currentDeviceId == null || currentDeviceId.length() == 0) {
-                                currentDeviceId = "dev-" + System.currentTimeMillis();
+                                HttpClient.postJson(assignUrl, assignBody.toString(), token1);
+                            } catch (Exception e) {
+                                e.printStackTrace();
                             }
-                            sp1.edit().putString("deviceId", currentDeviceId).putString("auth_token", token1).putString("userId", userId).putString("role", role).apply();
+
+                            sp1.edit().putString("auth_token", token1).putString("userId", userId).putString("role", role).apply();
 
                             runOnUiThread(() -> {
                                 Toast.makeText(LoginActivity.this, "Login OK", Toast.LENGTH_SHORT).show();
                                 try {
                                     AppRuntime.ensureTelemetryStarted(LoginActivity.this);
+                                    AppRuntime.syncSupportSessionIndicator(LoginActivity.this);
                                 } catch (Exception e) {
                                     e.printStackTrace();
                                 }

@@ -68,35 +68,35 @@ CREATE TABLE IF NOT EXISTS password_resets (
   CONSTRAINT fk_password_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-ALTER TABLE devices
-  ADD COLUMN IF NOT EXISTS imei VARCHAR(64) NULL,
-  ADD COLUMN IF NOT EXISTS model VARCHAR(191) NULL,
-  ADD COLUMN IF NOT EXISTS network_type VARCHAR(64) NULL,
-  ADD COLUMN IF NOT EXISTS battery_level TINYINT NULL,
-  ADD COLUMN IF NOT EXISTS carrier VARCHAR(120) NULL,
-  ADD COLUMN IF NOT EXISTS signal_level TINYINT NULL,
-  ADD COLUMN IF NOT EXISTS is_online TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS last_online_at DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS subscription_status ENUM('inactive','active','expired') NOT NULL DEFAULT 'inactive',
-  ADD COLUMN IF NOT EXISTS subscription_until DATETIME NULL;
+CREATE TABLE IF NOT EXISTS support_sessions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  session_id CHAR(32) NOT NULL UNIQUE,
+  device_id VARCHAR(191) NOT NULL,
+  request_type ENUM('screen','ambient_audio') NOT NULL,
+  requested_by_user_id BIGINT UNSIGNED NOT NULL,
+  approved_by_user_id BIGINT UNSIGNED NULL,
+  status ENUM('pending','approved','rejected','expired','stopped','cancelled') NOT NULL DEFAULT 'pending',
+  note VARCHAR(255) NULL,
+  requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  response_deadline_at DATETIME NOT NULL,
+  responded_at DATETIME NULL,
+  session_expires_at DATETIME NULL,
+  stop_requested_at DATETIME NULL,
+  stopped_at DATETIME NULL,
+  CONSTRAINT fk_support_requested_by FOREIGN KEY (requested_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_support_approved_by FOREIGN KEY (approved_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_support_sessions_device_status (device_id, status),
+  INDEX idx_support_sessions_device_requested (device_id, requested_at)
+);
 
-ALTER TABLE devices
-  ADD UNIQUE KEY IF NOT EXISTS uk_devices_imei (imei);
-
-ALTER TABLE payments
-  ADD COLUMN IF NOT EXISTS device_id VARCHAR(191) NULL,
-  ADD COLUMN IF NOT EXISTS provider_tx_id VARCHAR(120) NULL,
-  ADD COLUMN IF NOT EXISTS msisdn VARCHAR(40) NULL,
-  ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'MZN';
-
-ALTER TABLE payments
-  ADD INDEX IF NOT EXISTS idx_payments_device_id (device_id);
-
-
-ALTER TABLE devices
-  ADD INDEX IF NOT EXISTS idx_devices_owner_last_seen (owner_user_id, last_seen),
-  ADD INDEX IF NOT EXISTS idx_devices_subscription_status (subscription_status, subscription_until);
-
-ALTER TABLE payments
-  ADD INDEX IF NOT EXISTS idx_payments_status_created (status, created_at),
-  ADD INDEX IF NOT EXISTS idx_payments_user_created (user_id, created_at);
+CREATE TABLE IF NOT EXISTS support_session_events (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  session_id CHAR(32) NOT NULL,
+  event_type VARCHAR(80) NOT NULL,
+  actor_user_id BIGINT UNSIGNED NULL,
+  metadata JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_support_event_session FOREIGN KEY (session_id) REFERENCES support_sessions(session_id) ON DELETE CASCADE,
+  CONSTRAINT fk_support_event_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_support_session_events_session (session_id, created_at)
+);
