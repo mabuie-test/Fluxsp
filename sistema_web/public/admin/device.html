@@ -28,6 +28,7 @@
         <button id="btnRequestScreen">Solicitar ecrã</button>
         <button id="btnRequestAudio">Solicitar áudio</button>
         <button id="btnStopSession">Parar sessão ativa</button>
+        <button id="btnOpenMedia">Abrir media recebida</button>
       </div>
       <input id="supportNote" placeholder="Motivo/nota para o pedido" />
       <p id="supportMsg" class="small"></p>
@@ -151,6 +152,7 @@
     (async function(){
       document.getElementById('btnRequestScreen').addEventListener('click', () => requestSupport('screen'));
       document.getElementById('btnRequestAudio').addEventListener('click', () => requestSupport('ambient_audio'));
+      document.getElementById('btnOpenMedia').addEventListener('click', () => location.href='/admin/media.html?deviceId=' + encodeURIComponent(deviceId));
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
       await loadDevice();

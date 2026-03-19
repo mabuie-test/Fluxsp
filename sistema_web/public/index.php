@@ -540,18 +540,27 @@ try {
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
-        $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId FROM media WHERE device_id=? ORDER BY upload_date DESC');
+        $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId, storage_path as storagePath FROM media WHERE device_id=? ORDER BY upload_date DESC');
         $st->execute([$m['deviceId']]);
-        $files = array_map(
-            fn($r) => [
+        global $config;
+        $files = array_map(function ($r) use ($config) {
+            $contentType = (string)($r['contentType'] ?? 'application/octet-stream');
+            $kind = str_starts_with($contentType, 'image/')
+                ? 'image'
+                : (str_starts_with($contentType, 'audio/')
+                    ? 'audio'
+                    : (str_starts_with($contentType, 'video/') ? 'video' : 'other'));
+            $path = rtrim($config['media_dir'], '/') . '/' . ($r['storagePath'] ?? '');
+            return [
                 'fileId' => $r['fileId'],
                 'filename' => $r['filename'],
-                'contentType' => $r['contentType'],
+                'contentType' => $contentType,
                 'uploadDate' => $r['uploadDate'],
+                'kind' => $kind,
+                'sizeBytes' => is_file($path) ? filesize($path) : null,
                 'metadata' => ['checksum' => $r['checksum'], 'deviceId' => $r['deviceId']],
-            ],
-            $st->fetchAll()
-        );
+            ];
+        }, $st->fetchAll());
         json_response(['ok' => true, 'files' => $files]);
     }
 
@@ -606,7 +615,12 @@ try {
     }
 
     if ($method === 'GET' && ($m = route_match('/api/media/download/:fileId', $uri))) {
-        $u = auth_user();
+        $u = auth_user(false);
+        if (!$u && !empty($_GET['access_token'])) {
+            $u = jwt_verify((string)$_GET['access_token']) ?: null;
+        }
+        if (!$u) json_response(['error' => 'invalid_token'], 401);
+
         $st = db()->prepare('SELECT * FROM media WHERE file_id = ? LIMIT 1');
         $st->execute([$m['fileId']]);
         $f = $st->fetch();
@@ -620,9 +634,44 @@ try {
         $path = rtrim($config['media_dir'], '/') . '/' . $f['storage_path'];
         if (!is_file($path)) json_response(['ok' => false, 'error' => 'not_found'], 404);
 
-        header('Content-Type: ' . ($f['content_type'] ?: 'application/octet-stream'));
-        header('Content-Disposition: attachment; filename="' . basename($f['filename']) . '"');
-        readfile($path);
+        $mime = $f['content_type'] ?: 'application/octet-stream';
+        $size = filesize($path) ?: 0;
+        $download = isset($_GET['download']) && $_GET['download'] === '1';
+        $filename = basename((string)$f['filename']);
+        $start = 0;
+        $end = max(0, $size - 1);
+
+        header('Content-Type: ' . $mime);
+        header('Accept-Ranges: bytes');
+        header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="' . $filename . '"');
+        header('Cache-Control: private, max-age=3600');
+
+        if ($size > 0 && isset($_SERVER['HTTP_RANGE']) && preg_match('/bytes=(\d*)-(\d*)/', (string)$_SERVER['HTTP_RANGE'], $matches)) {
+            if ($matches[1] !== '') $start = (int)$matches[1];
+            if ($matches[2] !== '') $end = (int)$matches[2];
+            $start = max(0, min($start, $size - 1));
+            $end = max($start, min($end, $size - 1));
+            http_response_code(206);
+            header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
+            header('Content-Length: ' . (($end - $start) + 1));
+        } else {
+            header('Content-Length: ' . $size);
+        }
+
+        $fp = fopen($path, 'rb');
+        if (!$fp) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if ($start > 0) fseek($fp, $start);
+
+        $remaining = ($end - $start) + 1;
+        while (!feof($fp) && $remaining > 0) {
+            $chunkSize = (int)min(8192, $remaining);
+            $buffer = fread($fp, $chunkSize);
+            if ($buffer === false) break;
+            echo $buffer;
+            $remaining -= strlen($buffer);
+            if (function_exists('fastcgi_finish_request')) { flush(); } else { @ob_flush(); flush(); }
+        }
+        fclose($fp);
         exit;
     }
 
