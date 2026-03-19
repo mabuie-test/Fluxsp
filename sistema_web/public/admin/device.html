@@ -29,9 +29,16 @@
         <button id="btnRequestAudio">Solicitar áudio</button>
         <button id="btnStopSession">Parar sessão ativa</button>
       </div>
+      <input id="supportNote" placeholder="Motivo/nota para o pedido" />
+      <div class="actions">
+        <label>Prazo resposta (s): <input id="responseTtlSeconds" type="number" min="30" max="600" value="120" /></label>
+        <label>Duração sessão (s): <input id="sessionTtlSeconds" type="number" min="60" max="3600" value="600" /></label>
+      </div>
       <p id="supportMsg" class="small"></p>
       <div id="activeSupport" class="small">A carregar estado...</div>
       <ul id="supportHistory" style="padding-left:20px"></ul>
+      <h4>Eventos da última sessão</h4>
+      <ul id="supportEvents" style="padding-left:20px"></ul>
     </div>
     <div id="map" class="card"></div>
     <div class="card">
@@ -73,13 +80,17 @@
     }
 
     async function requestSupport(requestType) {
+      const responseTtlSeconds = Number(document.getElementById('responseTtlSeconds').value || 120);
+      const sessionTtlSeconds = Number(document.getElementById('sessionTtlSeconds').value || 600);
+      const note = document.getElementById('supportNote').value.trim();
       const res = await apiFetch('/api/support-sessions/request', {
         method:'POST',
         body: {
           deviceId,
           requestType,
-          responseTtlSeconds: 120,
-          sessionTtlSeconds: 600
+          responseTtlSeconds,
+          sessionTtlSeconds,
+          note
         }
       });
       document.getElementById('supportMsg').textContent = res.ok
@@ -97,12 +108,28 @@
       await loadSupportState();
     }
 
+    async function loadSupportEvents(sessionId) {
+      const ul = document.getElementById('supportEvents');
+      ul.innerHTML = '';
+      if (!sessionId) { ul.innerHTML = '<li>Sem eventos.</li>'; return; }
+      const res = await apiFetch('/api/support-sessions/' + encodeURIComponent(sessionId) + '/events', { method:'GET' });
+      const events = res.ok ? res.events : [];
+      events.forEach(event => {
+        const li = document.createElement('li');
+        const metadata = Object.keys(event.metadata || {}).length ? ' — ' + JSON.stringify(event.metadata) : '';
+        li.textContent = `${new Date(event.createdAt).toLocaleString()} — ${event.eventType}${metadata}`;
+        ul.appendChild(li);
+      });
+      if (!events.length) ul.innerHTML = '<li>Sem eventos.</li>';
+    }
+
     function renderSupportHistory(sessions) {
       const ul = document.getElementById('supportHistory');
       ul.innerHTML = '';
       sessions.forEach(session => {
         const li = document.createElement('li');
-        li.textContent = `${new Date(session.requestedAt).toLocaleString()} — ${session.requestType} — ${session.status}`;
+        const note = session.note ? ` — ${session.note}` : '';
+        li.textContent = `${new Date(session.requestedAt).toLocaleString()} — ${session.requestType} — ${session.status}${note}`;
         ul.appendChild(li);
       });
       if (!sessions.length) ul.innerHTML = '<li>Sem sessões recentes.</li>';
@@ -125,7 +152,9 @@
         stopBtn.disabled = true;
       }
 
-      renderSupportHistory(listRes.ok ? listRes.sessions : []);
+      const sessions = listRes.ok ? listRes.sessions : [];
+      renderSupportHistory(sessions);
+      await loadSupportEvents((activeRes.ok && activeRes.session ? activeRes.session.sessionId : (sessions[0] && sessions[0].sessionId)));
     }
 
     let map, marker;

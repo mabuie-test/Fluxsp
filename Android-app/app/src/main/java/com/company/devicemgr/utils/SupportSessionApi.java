@@ -52,4 +52,12 @@ public final class SupportSessionApi {
         JSONObject root = new JSONObject(res != null ? res : "{}");
         return root.optJSONObject("session");
     }
+
+    public static void logEvent(Context context, String sessionId, String eventType, JSONObject metadata) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("eventType", eventType);
+        body.put("metadata", metadata != null ? metadata : new JSONObject());
+        String url = ApiConfig.api("/api/support-sessions/" + sessionId + "/event");
+        HttpClient.postJson(url, body.toString(), currentToken(context));
+    }
 }

@@ -52,3 +52,4 @@ composer require phpmailer/phpmailer
 - O backend pode criar um pedido de sessão temporária para `screen` ou `ambient_audio` via `POST /api/support-sessions/request`.
 - A app Android consulta pedidos pendentes, mostra um pedido local ao utilizador e exige aprovação manual em cada sessão.
 - Sessões aprovadas expiram automaticamente, ficam visíveis com notificação persistente e podem ser interrompidas a qualquer momento pela app ou pelo painel.
+- O painel pode enviar nota/motivo, timeout de resposta e duração da sessão; o backend também guarda eventos de auditoria por sessão em `support_session_events`.

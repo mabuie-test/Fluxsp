@@ -269,6 +269,13 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
         sp.edit().putString(KEY_LAST_PROMPTED_SUPPORT_SESSION_ID, sessionId).apply();
         showSupportRequestNotification(session);
+        try {
+            JSONObject metadata = new JSONObject();
+            metadata.put("requestType", session.optString("requestType"));
+            SupportSessionApi.logEvent(this, sessionId, "prompt_shown", metadata);
+        } catch (Exception e) {
+            Log.e(TAG, "support prompt event err", e);
+        }
 
         try {
             Intent intent = new Intent(this, SessionApprovalActivity.class);
@@ -277,6 +284,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             intent.putExtra(SessionApprovalActivity.EXTRA_REQUEST_TYPE, session.optString("requestType"));
             intent.putExtra(SessionApprovalActivity.EXTRA_REQUESTED_AT, session.optString("requestedAt"));
             intent.putExtra(SessionApprovalActivity.EXTRA_DEADLINE_AT, session.optString("responseDeadlineAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_NOTE, session.optString("note"));
             startActivity(intent);
         } catch (Exception e) {
             Log.e(TAG, "unable to launch support approval UI", e);
@@ -290,6 +298,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             intent.putExtra(SessionApprovalActivity.EXTRA_REQUEST_TYPE, session.optString("requestType"));
             intent.putExtra(SessionApprovalActivity.EXTRA_REQUESTED_AT, session.optString("requestedAt"));
             intent.putExtra(SessionApprovalActivity.EXTRA_DEADLINE_AT, session.optString("responseDeadlineAt"));
+            intent.putExtra(SessionApprovalActivity.EXTRA_NOTE, session.optString("note"));
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
             PendingIntent pi = PendingIntent.getActivity(

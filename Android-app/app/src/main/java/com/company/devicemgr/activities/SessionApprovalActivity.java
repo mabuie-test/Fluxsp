@@ -15,6 +15,7 @@ public class SessionApprovalActivity extends Activity {
     public static final String EXTRA_REQUEST_TYPE = "request_type";
     public static final String EXTRA_REQUESTED_AT = "requested_at";
     public static final String EXTRA_DEADLINE_AT = "deadline_at";
+    public static final String EXTRA_NOTE = "note";
 
     private TextView tvMessage;
     private Button btnApprove;
@@ -33,9 +34,11 @@ public class SessionApprovalActivity extends Activity {
         String requestType = getIntent().getStringExtra(EXTRA_REQUEST_TYPE);
         String requestedAt = getIntent().getStringExtra(EXTRA_REQUESTED_AT);
         String deadlineAt = getIntent().getStringExtra(EXTRA_DEADLINE_AT);
+        String note = getIntent().getStringExtra(EXTRA_NOTE);
         tvMessage.setText("Pedido de sessão para " + friendlyType(requestType)
                 + "\nSolicitado em: " + (requestedAt != null ? requestedAt : "-")
-                + "\nResponder até: " + (deadlineAt != null ? deadlineAt : "-"));
+                + "\nResponder até: " + (deadlineAt != null ? deadlineAt : "-")
+                + "\nMotivo: " + (note != null && note.length() > 0 ? note : "não informado"));
 
         btnApprove.setOnClickListener(v -> confirmAndRespond(sessionId, true));
         btnReject.setOnClickListener(v -> confirmAndRespond(sessionId, false));

@@ -80,6 +80,25 @@ function find_support_session(string $sessionId): ?array {
     return $row ?: null;
 }
 
+function log_support_session_event(string $sessionId, string $eventType, ?string $actorUserId = null, ?array $metadata = null): void {
+    $st = db()->prepare('INSERT INTO support_session_events(session_id, event_type, actor_user_id, metadata) VALUES(?,?,?,?)');
+    $st->execute([
+        $sessionId,
+        $eventType,
+        $actorUserId !== null && $actorUserId !== '' ? $actorUserId : null,
+        $metadata ? json_encode($metadata) : null,
+    ]);
+}
+
+function normalize_support_session_event(array $row): array {
+    $row['sessionId'] = $row['session_id'] ?? null;
+    $row['eventType'] = $row['event_type'] ?? null;
+    $row['actorUserId'] = $row['actor_user_id'] ?? null;
+    $row['createdAt'] = $row['created_at'] ?? null;
+    $row['metadata'] = safe_json_decode($row['metadata'] ?? null) ?? [];
+    return $row;
+}
+
 function normalize_support_session(array $row): array {
     $row['sessionId'] = $row['session_id'] ?? null;
     $row['deviceId'] = $row['device_id'] ?? null;
@@ -364,6 +383,12 @@ try {
 
         $ins = db()->prepare('INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, note, response_deadline_at, session_expires_at) VALUES(?,?,?,?,?,?,?)');
         $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $note !== '' ? $note : null, $deadlineAt, date('Y-m-d H:i:s', time() + $sessionTtl)]);
+        log_support_session_event($sessionId, 'requested', (string)$u['id'], [
+            'requestType' => $requestType,
+            'responseTtlSeconds' => $responseTtl,
+            'sessionTtlSeconds' => $sessionTtl,
+            'note' => $note,
+        ]);
 
         $session = find_support_session($sessionId);
         json_response(['ok' => true, 'session' => $session ? normalize_support_session($session) : null]);
@@ -424,9 +449,11 @@ try {
             $ttl = max(60, min((int)($body['sessionTtlSeconds'] ?? 600), 3600));
             $up = db()->prepare("UPDATE support_sessions SET status = 'approved', approved_by_user_id = ?, responded_at = NOW(), session_expires_at = ? WHERE session_id = ?");
             $up->execute([$u['id'], date('Y-m-d H:i:s', time() + $ttl), $m['sessionId']]);
+            log_support_session_event($m['sessionId'], 'approved', (string)$u['id'], ['sessionTtlSeconds' => $ttl]);
         } else {
             $up = db()->prepare("UPDATE support_sessions SET status = 'rejected', responded_at = NOW(), stopped_at = NOW() WHERE session_id = ?");
             $up->execute([$m['sessionId']]);
+            log_support_session_event($m['sessionId'], 'rejected', (string)$u['id']);
         }
 
         $updated = find_support_session($m['sessionId']);
@@ -446,9 +473,41 @@ try {
         $status = $session['status'] === 'pending' ? 'cancelled' : 'stopped';
         $up = db()->prepare('UPDATE support_sessions SET status = ?, stop_requested_at = NOW(), stopped_at = NOW() WHERE session_id = ?');
         $up->execute([$status, $m['sessionId']]);
+        log_support_session_event($m['sessionId'], $status === 'cancelled' ? 'cancelled' : 'stopped', (string)$u['id']);
 
         $updated = find_support_session($m['sessionId']);
         json_response(['ok' => true, 'session' => $updated ? normalize_support_session($updated) : null]);
+    }
+
+    if ($method === 'POST' && ($m = route_match('/api/support-sessions/:sessionId/event', $uri))) {
+        $u = auth_user();
+        $session = find_support_session($m['sessionId']);
+        if (!$session) json_response(['ok' => false, 'error' => 'not_found'], 404);
+
+        $d = find_device($session['device_id']);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+
+        $eventType = trim((string)($body['eventType'] ?? ''));
+        if ($eventType === '') json_response(['ok' => false, 'error' => 'missing_event_type'], 400);
+
+        $metadata = isset($body['metadata']) && is_array($body['metadata']) ? $body['metadata'] : [];
+        log_support_session_event($m['sessionId'], $eventType, (string)$u['id'], $metadata);
+        json_response(['ok' => true]);
+    }
+
+    if ($method === 'GET' && ($m = route_match('/api/support-sessions/:sessionId/events', $uri))) {
+        $u = auth_user();
+        $session = find_support_session($m['sessionId']);
+        if (!$session) json_response(['ok' => false, 'error' => 'not_found'], 404);
+
+        $d = find_device($session['device_id']);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+
+        $st = db()->prepare('SELECT * FROM support_session_events WHERE session_id = ? ORDER BY created_at DESC LIMIT 50');
+        $st->execute([$m['sessionId']]);
+        json_response(['ok' => true, 'events' => array_map('normalize_support_session_event', $st->fetchAll())]);
     }
 
     // Telemetry
