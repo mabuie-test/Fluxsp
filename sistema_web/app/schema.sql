@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS support_sessions (
   status ENUM('pending','approved','rejected','expired','stopped','cancelled') NOT NULL DEFAULT 'pending',
   note VARCHAR(255) NULL,
   requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  response_deadline_at DATETIME NOT NULL,
+  response_deadline_at DATETIME NULL,
   responded_at DATETIME NULL,
   session_expires_at DATETIME NULL,
   stop_requested_at DATETIME NULL,
@@ -87,16 +87,4 @@ CREATE TABLE IF NOT EXISTS support_sessions (
   CONSTRAINT fk_support_approved_by FOREIGN KEY (approved_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
   INDEX idx_support_sessions_device_status (device_id, status),
   INDEX idx_support_sessions_device_requested (device_id, requested_at)
-);
-
-CREATE TABLE IF NOT EXISTS support_session_events (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  session_id CHAR(32) NOT NULL,
-  event_type VARCHAR(80) NOT NULL,
-  actor_user_id BIGINT UNSIGNED NULL,
-  metadata JSON NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_support_event_session FOREIGN KEY (session_id) REFERENCES support_sessions(session_id) ON DELETE CASCADE,
-  CONSTRAINT fk_support_event_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL,
-  INDEX idx_support_session_events_session (session_id, created_at)
 );

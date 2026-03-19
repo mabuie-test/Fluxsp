@@ -43,11 +43,6 @@
             android:name="com.company.devicemgr.activities.MainPermissionsActivity"
             android:exported="false" />
 
-        <activity
-            android:name="com.company.devicemgr.activities.SessionApprovalActivity"
-            android:excludeFromRecents="true"
-            android:exported="false" />
-
         <service
             android:name="com.company.devicemgr.services.ForegroundTelemetryService"
             android:exported="false"
@@ -55,10 +50,6 @@
 
         <service
             android:name="com.company.devicemgr.services.CallRecordingService"
-            android:exported="false" />
-
-        <service
-            android:name="com.company.devicemgr.services.SupportSessionService"
             android:exported="false" />
 
         <service
@@ -112,10 +103,6 @@
             </intent-filter>
         </receiver>
 
-        <receiver
-            android:name="com.company.devicemgr.receivers.SupportSessionActionReceiver"
-            android:enabled="true"
-            android:exported="false" />
 
     </application>
 </manifest>
