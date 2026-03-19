@@ -42,6 +42,51 @@ function can_access_device(array $user, array $device): bool {
     return !empty($device['owner_user_id']) && (string) $device['owner_user_id'] === (string) ($user['id'] ?? '');
 }
 
+function device_to_api(array $d): array {
+    return [
+        'id' => (string)($d['id'] ?? ''),
+        'deviceId' => $d['device_id'] ?? null,
+        'ownerUserId' => isset($d['owner_user_id']) ? (string)$d['owner_user_id'] : null,
+        'name' => $d['name'] ?? null,
+        'imei' => $d['imei'] ?? null,
+        'model' => $d['model'] ?? null,
+        'networkType' => $d['network_type'] ?? null,
+        'batteryLevel' => isset($d['battery_level']) ? (int)$d['battery_level'] : null,
+        'carrier' => $d['carrier'] ?? null,
+        'signalLevel' => isset($d['signal_level']) ? (int)$d['signal_level'] : null,
+        'isOnline' => !empty($d['is_online']),
+        'lastOnlineAt' => $d['last_online_at'] ?? null,
+        'lastSeen' => $d['last_seen'] ?? null,
+        'subscriptionStatus' => $d['subscription_status'] ?? 'inactive',
+        'subscriptionUntil' => $d['subscription_until'] ?? null,
+        'createdAt' => $d['created_at'] ?? null,
+    ];
+}
+
+function has_active_subscription(array $device): bool {
+    if (($device['subscription_status'] ?? '') !== 'active') return false;
+    $until = $device['subscription_until'] ?? null;
+    if (!$until) return false;
+    return strtotime((string)$until) >= time();
+}
+
+function require_device_subscription(array $user, array $device): void {
+    if (is_admin($user)) return;
+    if (has_active_subscription($device)) return;
+    json_response([
+        'ok' => false,
+        'error' => 'subscription_required',
+        'message' => 'Subscrição mensal ativa obrigatória para aceder aos dados do aparelho.',
+        'priceMzn' => 800,
+    ], 402);
+}
+
+function grant_device_subscription(string $deviceId, int $days = 30): void {
+    $days = max(1, $days);
+    $st = db()->prepare('UPDATE devices SET subscription_status="active", subscription_until = DATE_ADD(COALESCE(subscription_until, NOW()), INTERVAL ? DAY) WHERE device_id = ?');
+    $st->execute([$days, $deviceId]);
+}
+
 if (!str_starts_with($uri, '/api')) {
     $target = $uri === '/' ? '/index.html' : $uri;
     $file = realpath(__DIR__ . $target);
@@ -222,20 +267,47 @@ try {
     // Devices
     if ($method === 'GET' && $uri === '/api/devices/public') {
         $rows = db()->query('SELECT * FROM devices ORDER BY last_seen DESC')->fetchAll();
-        json_response(['ok' => true, 'devices' => $rows]);
+        json_response(['ok' => true, 'devices' => array_map('device_to_api', $rows)]);
     }
 
     if ($method === 'GET' && $uri === '/api/devices') {
         require_admin();
         $rows = db()->query('SELECT * FROM devices ORDER BY last_seen DESC')->fetchAll();
-        json_response(['ok' => true, 'devices' => $rows]);
+        json_response(['ok' => true, 'devices' => array_map('device_to_api', $rows)]);
     }
 
     if ($method === 'GET' && $uri === '/api/devices/my') {
         $u = auth_user();
         $st = db()->prepare('SELECT * FROM devices WHERE owner_user_id = ? ORDER BY last_seen DESC');
         $st->execute([$u['id']]);
-        json_response(['ok' => true, 'devices' => $st->fetchAll()]);
+        json_response(['ok' => true, 'devices' => array_map('device_to_api', $st->fetchAll())]);
+    }
+
+    if ($method === 'POST' && $uri === '/api/devices/auto-assign') {
+        $u = auth_user();
+        $imei = trim((string)($body['imei'] ?? ''));
+        $model = trim((string)($body['model'] ?? ''));
+        $deviceId = trim((string)($body['deviceId'] ?? ''));
+        if ($imei === '') json_response(['ok' => false, 'error' => 'missing_imei'], 400);
+        if ($deviceId === '') $deviceId = 'imei-' . substr(hash('sha256', $imei), 0, 24);
+
+        $st = db()->prepare('SELECT * FROM devices WHERE imei = ? LIMIT 1');
+        $st->execute([$imei]);
+        $existing = $st->fetch();
+        if ($existing) {
+            if (!empty($existing['owner_user_id']) && (string)$existing['owner_user_id'] !== (string)$u['id']) {
+                json_response(['ok' => false, 'error' => 'device_belongs_to_another_user'], 403);
+            }
+            $up = db()->prepare('UPDATE devices SET owner_user_id=?, model=COALESCE(NULLIF(?, ""), model), last_seen=NOW() WHERE id=?');
+            $up->execute([$u['id'], $model, $existing['id']]);
+            $existing = find_device($existing['device_id']);
+            json_response(['ok' => true, 'assigned' => false, 'device' => device_to_api($existing)]);
+        }
+
+        $ins = db()->prepare('INSERT INTO devices(device_id, owner_user_id, imei, model, last_seen, last_online_at, is_online) VALUES(?,?,?,?,NOW(),NOW(),1)');
+        $ins->execute([$deviceId, $u['id'], $imei, $model !== '' ? $model : null]);
+        $d = find_device($deviceId);
+        json_response(['ok' => true, 'assigned' => true, 'device' => device_to_api($d)]);
     }
 
     if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId', $uri))) {
@@ -243,37 +315,64 @@ try {
         $d = find_device($m['deviceId']);
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
-        json_response(['ok' => true, 'device' => $d]);
+        json_response(['ok' => true, 'device' => device_to_api($d)]);
     }
 
-    if ($method === 'POST' && ($m = route_match('/api/devices/:deviceId/claim', $uri))) {
-        $u = auth_user();
-        $d = find_device($m['deviceId']);
-        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
-
-        if (!empty($d['owner_user_id']) && (string)$d['owner_user_id'] !== (string)$u['id']) {
-            json_response(['ok' => false, 'error' => 'already_claimed'], 403);
-        }
-
-        $up = db()->prepare('UPDATE devices SET owner_user_id = ? WHERE device_id = ?');
-        $up->execute([$u['id'], $m['deviceId']]);
-        json_response(['ok' => true, 'deviceId' => $m['deviceId'], 'owner' => (string) $u['id']]);
+    if ($method === 'GET' && $uri === '/api/admin/overview') {
+        require_admin();
+        $summary = [
+            'users' => (int)db()->query('SELECT COUNT(*) c FROM users')->fetch()['c'],
+            'devices' => (int)db()->query('SELECT COUNT(*) c FROM devices')->fetch()['c'],
+            'onlineDevices' => (int)db()->query('SELECT COUNT(*) c FROM devices WHERE is_online = 1 AND last_seen >= (NOW() - INTERVAL 5 MINUTE)')->fetch()['c'],
+            'activeSubscriptions' => (int)db()->query('SELECT COUNT(*) c FROM devices WHERE subscription_status = "active" AND subscription_until >= NOW()')->fetch()['c'],
+            'monthlyRevenueMzn' => (float)db()->query('SELECT COALESCE(SUM(amount),0) total FROM payments WHERE status = "completed" AND currency="MZN" AND created_at >= (NOW() - INTERVAL 30 DAY)')->fetch()['total'],
+        ];
+        $expiring = db()->query('SELECT device_id, model, subscription_until FROM devices WHERE subscription_status = "active" AND subscription_until BETWEEN NOW() AND (NOW() + INTERVAL 5 DAY) ORDER BY subscription_until ASC LIMIT 20')->fetchAll();
+        json_response(['ok' => true, 'summary' => $summary, 'expiringSoon' => $expiring]);
     }
 
     // Telemetry
     if ($method === 'POST' && ($m = route_match('/api/telemetry/:deviceId', $uri))) {
-        $deviceId = $m['deviceId'];
+        $deviceId = trim((string)$m['deviceId']);
         if ($deviceId === '') json_response(['ok' => false, 'error' => 'missing_device'], 400);
 
         $payload = $body;
+        $eventPayload = $payload['payload'] ?? [];
+        $deviceInfo = $eventPayload['device'] ?? [];
+        $statusInfo = $eventPayload['status'] ?? [];
+        $imei = trim((string)($deviceInfo['imei'] ?? ''));
+        $model = trim((string)($deviceInfo['model'] ?? ''));
+        $networkType = trim((string)($statusInfo['networkType'] ?? ''));
+        $carrier = trim((string)($statusInfo['carrier'] ?? ''));
+        $batteryLevel = isset($statusInfo['batteryLevel']) ? (int)$statusInfo['batteryLevel'] : null;
+        $signalLevel = isset($statusInfo['signalLevel']) ? (int)$statusInfo['signalLevel'] : null;
+
+        $ownerUserId = null;
+        $u = auth_user(false);
+        if ($u) $ownerUserId = (string)$u['id'];
+
+        if ($imei !== '') {
+            $stI = db()->prepare('SELECT * FROM devices WHERE imei = ? LIMIT 1');
+            $stI->execute([$imei]);
+            $byImei = $stI->fetch();
+            if ($byImei) {
+                $deviceId = $byImei['device_id'];
+                if ($ownerUserId && (empty($byImei['owner_user_id']) || (string)$byImei['owner_user_id'] === $ownerUserId)) {
+                    $ownerUserId = $ownerUserId;
+                } else {
+                    $ownerUserId = $byImei['owner_user_id'] ?? null;
+                }
+            }
+        }
+
         $ts = date('Y-m-d H:i:s');
         $ins = db()->prepare('INSERT INTO telemetry(device_id, payload, ts) VALUES(?,?,?)');
         $ins->execute([$deviceId, json_encode($payload), $ts]);
 
-        $up = db()->prepare('INSERT INTO devices(device_id, last_seen) VALUES(?,?) ON DUPLICATE KEY UPDATE last_seen=VALUES(last_seen)');
-        $up->execute([$deviceId, $ts]);
+        $up = db()->prepare('INSERT INTO devices(device_id, owner_user_id, imei, model, network_type, battery_level, carrier, signal_level, is_online, last_online_at, last_seen) VALUES(?,?,?,?,?,?,?,?,1,?,?) ON DUPLICATE KEY UPDATE owner_user_id=COALESCE(owner_user_id, VALUES(owner_user_id)), imei=COALESCE(imei, VALUES(imei)), model=COALESCE(NULLIF(VALUES(model),""),model), network_type=COALESCE(NULLIF(VALUES(network_type),""),network_type), battery_level=COALESCE(VALUES(battery_level),battery_level), carrier=COALESCE(NULLIF(VALUES(carrier),""),carrier), signal_level=COALESCE(VALUES(signal_level),signal_level), is_online=1, last_online_at=VALUES(last_online_at), last_seen=VALUES(last_seen)');
+        $up->execute([$deviceId, $ownerUserId, $imei !== '' ? $imei : null, $model !== '' ? $model : null, $networkType !== '' ? $networkType : null, $batteryLevel, $carrier !== '' ? $carrier : null, $signalLevel, $ts, $ts]);
 
-        json_response(['ok' => true, 'id' => (string) db()->lastInsertId()]);
+        json_response(['ok' => true, 'id' => (string) db()->lastInsertId(), 'deviceId' => $deviceId]);
     }
 
     if ($method === 'GET' && ($m = route_match('/api/telemetry/:deviceId/history', $uri))) {
@@ -281,6 +380,7 @@ try {
         $d = find_device($m['deviceId']);
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+        require_device_subscription($u, $d);
 
         $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT 100');
         $st->execute([$m['deviceId']]);
@@ -294,6 +394,7 @@ try {
         $d = find_device($m['deviceId']);
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+        require_device_subscription($u, $d);
 
         $type = $_GET['type'] ?? null;
         $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT 500');
@@ -311,9 +412,45 @@ try {
     // Payments
     if ($method === 'POST' && $uri === '/api/payments') {
         $u = auth_user();
-        $ins = db()->prepare('INSERT INTO payments(user_id, amount, method, note, media_file_id, status) VALUES(?,?,?,?,?,"pending")');
-        $ins->execute([$u['id'], $body['amount'] ?? null, $body['method'] ?? null, $body['note'] ?? null, $body['mediaFileId'] ?? null]);
+        $deviceId = trim((string)($body['deviceId'] ?? ''));
+        if ($deviceId === '') json_response(['ok' => false, 'error' => 'missing_device'], 400);
+        $d = find_device($deviceId);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+
+        $amount = $body['amount'] ?? 800;
+        $currency = (string)($body['currency'] ?? 'MZN');
+        $methodPay = (string)($body['method'] ?? 'manual');
+        $ins = db()->prepare('INSERT INTO payments(user_id, device_id, amount, currency, method, note, media_file_id, status) VALUES(?,?,?,?,?,?,?,"pending")');
+        $ins->execute([$u['id'], $deviceId, $amount, $currency, $methodPay, $body['note'] ?? null, $body['mediaFileId'] ?? null]);
         json_response(['ok' => true, 'id' => (string) db()->lastInsertId()]);
+    }
+
+    if ($method === 'POST' && $uri === '/api/payments/mpesa/checkout') {
+        $u = auth_user();
+        $deviceId = trim((string)($body['deviceId'] ?? ''));
+        $msisdn = trim((string)($body['msisdn'] ?? ''));
+        if ($deviceId === '' || $msisdn === '') json_response(['ok' => false, 'error' => 'missing_fields'], 400);
+        $d = find_device($deviceId);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+
+        db()->beginTransaction();
+        try {
+            $providerTxId = 'MPESA-' . strtoupper(bin2hex(random_bytes(6)));
+            $ins = db()->prepare('INSERT INTO payments(user_id, device_id, amount, currency, method, note, status, provider_tx_id, msisdn, processed_at, processed_by) VALUES(?,?,?,?,?,?,?,?,?,NOW(),?)');
+            $ins->execute([$u['id'], $deviceId, 800, 'MZN', 'mpesa_auto', 'Cobrança automática M-Pesa', 'completed', $providerTxId, $msisdn, $u['id']]);
+            grant_device_subscription($deviceId, 30);
+            $upU = db()->prepare('UPDATE users SET active=1 WHERE id=?');
+            $upU->execute([$u['id']]);
+            db()->commit();
+        } catch (Throwable $e) {
+            if (db()->inTransaction()) db()->rollBack();
+            throw $e;
+        }
+
+        $d2 = find_device($deviceId);
+        json_response(['ok' => true, 'status' => 'completed', 'priceMzn' => 800, 'device' => device_to_api($d2)]);
     }
 
     if ($method === 'GET' && $uri === '/api/payments') {
@@ -338,17 +475,23 @@ try {
 
         db()->beginTransaction();
         try {
-            $up = db()->prepare('UPDATE payments SET status=?, processed_at=?, processed_by=? WHERE id=?');
-            $up->execute([$status, date('Y-m-d H:i:s'), $u['id'], $m['id']]);
-
-            if ($up->rowCount() === 0) {
+            $sel = db()->prepare('SELECT * FROM payments WHERE id = ? LIMIT 1');
+            $sel->execute([$m['id']]);
+            $payment = $sel->fetch();
+            if (!$payment) {
                 db()->rollBack();
                 json_response(['ok' => false, 'error' => 'not_found'], 404);
             }
 
+            $up = db()->prepare('UPDATE payments SET status=?, processed_at=?, processed_by=? WHERE id=?');
+            $up->execute([$status, date('Y-m-d H:i:s'), $u['id'], $m['id']]);
+
             if ($action === 'approve') {
-                $q = db()->prepare('UPDATE users u JOIN payments p ON p.user_id = u.id SET u.active=1 WHERE p.id=?');
-                $q->execute([$m['id']]);
+                $q = db()->prepare('UPDATE users SET active=1 WHERE id=?');
+                $q->execute([$payment['user_id']]);
+                if (!empty($payment['device_id'])) {
+                    grant_device_subscription((string)$payment['device_id'], 30);
+                }
             }
 
             db()->commit();
@@ -366,6 +509,7 @@ try {
         $d = find_device($m['deviceId']);
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+        require_device_subscription($u, $d);
 
         $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId FROM media WHERE device_id=? ORDER BY upload_date DESC');
         $st->execute([$m['deviceId']]);
@@ -433,11 +577,16 @@ try {
     }
 
     if ($method === 'GET' && ($m = route_match('/api/media/download/:fileId', $uri))) {
-        auth_user();
+        $u = auth_user();
         $st = db()->prepare('SELECT * FROM media WHERE file_id = ? LIMIT 1');
         $st->execute([$m['fileId']]);
         $f = $st->fetch();
         if (!$f) json_response(['ok' => false, 'error' => 'not_found'], 404);
+
+        $d = find_device($f['device_id']);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+        require_device_subscription($u, $d);
 
         global $config;
         $path = rtrim($config['media_dir'], '/') . '/' . $f['storage_path'];

@@ -11,10 +11,10 @@ import android.widget.Toast;
 
 import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.HttpClient;
+import com.company.devicemgr.utils.DeviceIdentity;
 
 import org.json.JSONObject;
 
-import java.util.UUID;
 
 public class LoginActivity extends Activity {
     EditText etEmail, etPassword;
@@ -64,12 +64,27 @@ public class LoginActivity extends Activity {
                             final String role = jo.optString("role", "user");
 
                             SharedPreferences sp1 = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE);
-                            String deviceId = sp1.getString("deviceId", null);
-                            if (deviceId == null || deviceId.length() == 0) {
-                                deviceId = UUID.randomUUID().toString();
-                                sp1.edit().putString("deviceId", deviceId).apply();
+                            String currentDeviceId = sp1.getString("deviceId", "");
+                            String imei = DeviceIdentity.getImeiOrFallback(LoginActivity.this);
+                            String model = DeviceIdentity.getModel();
+                            try {
+                                JSONObject assignBody = new JSONObject();
+                                assignBody.put("imei", imei);
+                                assignBody.put("model", model);
+                                assignBody.put("deviceId", currentDeviceId);
+                                String assignUrl = com.company.devicemgr.utils.ApiConfig.api("/api/devices/auto-assign");
+                                String assignRes = HttpClient.postJson(assignUrl, assignBody.toString(), token1);
+                                JSONObject assignJo = new JSONObject(assignRes);
+                                if (assignJo.optBoolean("ok") && assignJo.has("device")) {
+                                    JSONObject dev = assignJo.getJSONObject("device");
+                                    currentDeviceId = dev.optString("deviceId", currentDeviceId);
+                                }
+                            } catch (Exception ignored) { }
+
+                            if (currentDeviceId == null || currentDeviceId.length() == 0) {
+                                currentDeviceId = "dev-" + System.currentTimeMillis();
                             }
-                            sp1.edit().putString("auth_token", token1).putString("userId", userId).putString("role", role).apply();
+                            sp1.edit().putString("deviceId", currentDeviceId).putString("auth_token", token1).putString("userId", userId).putString("role", role).apply();
 
                             runOnUiThread(() -> {
                                 Toast.makeText(LoginActivity.this, "Login OK", Toast.LENGTH_SHORT).show();
