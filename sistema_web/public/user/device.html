@@ -51,6 +51,7 @@
       </div>
       <div class="live-grid">
         <div>
+          <video id="liveScreenVideo" class="live-frame" style="display:none" autoplay muted playsinline controls></video>
           <img id="liveScreenFrame" class="live-frame" alt="Live screen frame" style="display:none" />
           <div id="liveScreenEmpty" class="empty-state">Sem frames live de ecrã.</div>
         </div>
@@ -93,7 +94,8 @@
       if (!r.ok) { el.innerText = 'Erro: ' + (r.error || JSON.stringify(r)); return; }
       const d = r.device;
       el.innerHTML = `<strong>DeviceId:</strong> ${d.deviceId} <br>
-                      <strong>Name:</strong> ${d.name || '-'} <br>
+                      <strong>IMEI:</strong> ${d.imei || d.deviceId || '-'} <br>
+                      <strong>Modelo:</strong> ${d.model || d.name || '-'} <br>
                       <strong>Last seen:</strong> ${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'} <br>
                       <strong>Online:</strong> ${d.isOnline ? 'Sim' : 'Não'} <br>
                       <strong>Consentimento remoto:</strong> ${d.consentAccepted ? 'OK' : 'Pendente'} <br>
@@ -162,6 +164,9 @@
       document.getElementById('liveStreamHint').textContent = reason;
       document.getElementById('liveStreamBadge').textContent = 'Idle';
       document.getElementById('liveStreamBadge').className = 'badge badge-muted';
+      document.getElementById('liveScreenVideo').pause();
+      document.getElementById('liveScreenVideo').removeAttribute('src');
+      document.getElementById('liveScreenVideo').style.display = 'none';
       document.getElementById('liveScreenFrame').style.display = 'none';
       document.getElementById('liveScreenEmpty').style.display = 'block';
       const liveAudioPlayer = document.getElementById('liveAudioPlayer');
@@ -202,10 +207,20 @@
     function pumpScreenQueue(frameIntervalMs){
       if (liveState.screenTimer || !liveState.screenQueue.length) return;
       const frame = liveState.screenQueue.shift();
+      const videoEl = document.getElementById('liveScreenVideo');
       const frameEl = document.getElementById('liveScreenFrame');
       const frameEmpty = document.getElementById('liveScreenEmpty');
-      frameEl.src = frame.previewUrl + (frame.previewUrl.includes('?') ? '&' : '?') + '_live=' + encodeURIComponent(frame.fileId + '-' + (frame.segmentStartedAt || frame.uploadDate || Date.now()));
-      frameEl.style.display = 'block';
+      const src = frame.previewUrl + (frame.previewUrl.includes('?') ? '&' : '?') + '_live=' + encodeURIComponent(frame.fileId + '-' + (frame.segmentStartedAt || frame.uploadDate || Date.now()));
+      if ((frame.contentType || '').startsWith('video/')) {
+        videoEl.src = src;
+        videoEl.style.display = 'block';
+        frameEl.style.display = 'none';
+        videoEl.play().catch(()=>{});
+      } else {
+        frameEl.src = src;
+        frameEl.style.display = 'block';
+        videoEl.style.display = 'none';
+      }
       frameEmpty.style.display = 'none';
       liveState.screenTimer = setTimeout(() => {
         liveState.screenTimer = null;

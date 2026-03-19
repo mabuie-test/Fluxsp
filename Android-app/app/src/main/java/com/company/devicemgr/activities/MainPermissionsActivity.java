@@ -36,6 +36,7 @@ public class MainPermissionsActivity extends Activity {
     private static final int ANDROID_13_API_LEVEL = 33;
     private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
+    private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
     private static final String POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS";
 
     @Override
@@ -148,7 +149,7 @@ public class MainPermissionsActivity extends Activity {
 
     private String[] getStoragePermissionsForCurrentVersion() {
         if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
-            return new String[]{READ_MEDIA_IMAGES_PERMISSION, READ_MEDIA_VIDEO_PERMISSION};
+            return new String[]{READ_MEDIA_IMAGES_PERMISSION, READ_MEDIA_VIDEO_PERMISSION, READ_MEDIA_AUDIO_PERMISSION};
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             return new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};

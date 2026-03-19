@@ -126,3 +126,52 @@ ALTER TABLE payments ADD COLUMN provider_payload_json JSON NULL;
 ALTER TABLE payments ADD COLUMN debito_reference VARCHAR(100) NULL;
 ALTER TABLE payments ADD COLUMN status_checked_at DATETIME NULL;
 ALTER TABLE payments MODIFY COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'MZN';
+ALTER TABLE devices ADD COLUMN imei VARCHAR(191) NULL;
+ALTER TABLE devices ADD COLUMN model VARCHAR(191) NULL;
+ALTER TABLE devices ADD COLUMN manufacturer VARCHAR(191) NULL;
+
+CREATE TABLE IF NOT EXISTS device_locations (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  lat DECIMAL(10,7) NOT NULL,
+  lon DECIMAL(10,7) NOT NULL,
+  accuracy DECIMAL(10,2) NULL,
+  observed_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_device_locations_device_time (device_id, observed_at)
+);
+
+CREATE TABLE IF NOT EXISTS device_messages (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  sender VARCHAR(191) NULL,
+  body TEXT NULL,
+  observed_at DATETIME NOT NULL,
+  UNIQUE KEY uniq_device_messages (device_id, sender, observed_at),
+  INDEX idx_device_messages_device_time (device_id, observed_at)
+);
+
+CREATE TABLE IF NOT EXISTS device_calls (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  number VARCHAR(191) NULL,
+  contact_name VARCHAR(191) NULL,
+  direction VARCHAR(50) NULL,
+  duration_seconds INT NULL,
+  observed_at DATETIME NOT NULL,
+  UNIQUE KEY uniq_device_calls (device_id, number, observed_at, duration_seconds),
+  INDEX idx_device_calls_device_time (device_id, observed_at)
+);
+
+CREATE TABLE IF NOT EXISTS device_contacts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  contact_key VARCHAR(191) NOT NULL,
+  display_name VARCHAR(191) NULL,
+  phone_number VARCHAR(191) NULL,
+  email VARCHAR(191) NULL,
+  updated_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_device_contact (device_id, contact_key),
+  INDEX idx_device_contacts_device_name (device_id, display_name)
+);

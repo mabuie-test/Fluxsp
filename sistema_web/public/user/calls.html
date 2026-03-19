@@ -4,7 +4,7 @@
 <body>
   <div class="container">
     <header style="display:flex;justify-content:space-between"><h1>Chamadas</h1><div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div></header>
-    <div class="card"><label>DeviceId: <input id="deviceId" /></label><button id="btnLoad">Carregar</button></div>
+    <div class="card"><label>Dispositivo: <select id="deviceSelect"><option value="">Selecione</option></select></label> <label>DeviceId: <input id="deviceId" /></label><button id="btnLoad">Carregar</button></div>
     <div class="card"><ul id="list" style="list-style:none;padding-left:0"></ul></div>
   </div>
   <script src="/js/api.js"></script>
@@ -14,6 +14,21 @@
 
     const params = new URLSearchParams(window.location.search);
     if (params.get('deviceId')) document.getElementById('deviceId').value = params.get('deviceId');
+
+    async function loadDeviceOptions(){
+      const res = await apiFetch('/api/devices/my', { method:'GET' });
+      if (!res.ok) return;
+      const sel = document.getElementById('deviceSelect');
+      sel.innerHTML = '<option value="">Selecione</option>';
+      (res.devices || []).forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = (d.model || d.name || d.deviceId) + (d.model || d.name ? ` (${d.deviceId})` : '');
+        if (d.deviceId === document.getElementById('deviceId').value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => document.getElementById('deviceId').value = sel.value);
+    }
 
     document.getElementById('btnLoad').addEventListener('click', async () => {
       const deviceId = document.getElementById('deviceId').value.trim();
@@ -42,7 +57,9 @@
       });
     });
 
-    if (document.getElementById('deviceId').value) document.getElementById('btnLoad').click();
+    loadDeviceOptions().then(() => {
+      if (document.getElementById('deviceId').value) document.getElementById('btnLoad').click();
+    });
   </script>
 </body>
 </html>
