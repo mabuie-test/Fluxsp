@@ -117,7 +117,7 @@ public class MainPermissionsActivity extends Activity {
 
         btnGrantScreenCapture.setOnClickListener(v -> new AlertDialog.Builder(MainPermissionsActivity.this)
                 .setTitle("Captura live de ecrã")
-                .setMessage("Para streaming remoto real do ecrã, o Android precisa de uma autorização do sistema para MediaProjection. Aceite a próxima janela para disponibilizar frames live ao painel web enquanto o processo da app estiver ativo.")
+                .setMessage("Para streaming remoto real do ecrã, o Android precisa de uma autorização do sistema para MediaProjection. Aceite a próxima janela; depois disso a app vai reutilizar essa autorização enquanto o processo/serviço permanecer ativo, evitando novos pedidos em cada sessão.")
                 .setPositiveButton("Continuar", (d, which) -> requestScreenCaptureGrant())
                 .setNegativeButton("Cancelar", null)
                 .show());

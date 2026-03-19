@@ -335,7 +335,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private void maybeRunRemoteSupportStream(JSONObject activeSession) {
         if (activeSession == null || activeSession.optString("sessionId", "").length() == 0) {
             activeScreenSessionId = null;
-            releaseScreenProjection();
             return;
         }
         String requestType = activeSession.optString("requestType", "");
@@ -343,7 +342,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
         if ("ambient_audio".equals(requestType)) {
             activeScreenSessionId = null;
-            releaseScreenProjection();
             captureAndUploadAmbientAudio(sessionId);
             return;
         }
