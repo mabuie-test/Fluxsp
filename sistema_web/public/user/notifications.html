@@ -12,6 +12,7 @@
     </header>
 
     <div class="card">
+      <label>Dispositivo: <select id="deviceSelect"><option value="">Selecione</option></select></label>
       <label>DeviceId: <input id="deviceId" /></label>
       <button id="btnLoad">Carregar</button>
     </div>
@@ -34,7 +35,24 @@
     const initialDevice = params.get('deviceId');
     if (initialDevice) document.getElementById('deviceId').value = initialDevice;
 
+    loadDeviceOptions();
+
     document.getElementById('btnLoad').addEventListener('click', load);
+
+    async function loadDeviceOptions(){
+      const res = await apiFetch('/api/devices/my', { method:'GET' });
+      if (!res.ok) return;
+      const sel = document.getElementById('deviceSelect');
+      sel.innerHTML = '<option value="">Selecione</option>';
+      (res.devices || []).forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = (d.model || d.name || d.deviceId) + (d.model || d.name ? ` (${d.deviceId})` : '');
+        if (d.deviceId === document.getElementById('deviceId').value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', ()=>{ document.getElementById('deviceId').value = sel.value; });
+    }
 
     async function load(){
       const deviceId = document.getElementById('deviceId').value.trim();

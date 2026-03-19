@@ -31,6 +31,7 @@
           <a class="btn-link" id="linkMap" href="#">Mapa</a>
           <a class="btn-link" id="linkNotifications" href="#">Notificações</a>
           <a class="btn-link" id="linkMessages" href="#">Mensagens</a>
+          <a class="btn-link" id="linkContacts" href="#">Contactos</a>
           <a class="btn-link" id="linkCalls" href="#">Chamadas</a>
           <a class="btn-link" id="linkMedia" href="#">Media</a>
         </div>
@@ -79,13 +80,13 @@
       <div class="section-header">
         <div>
           <h3>Pagamento mensal via M-Pesa</h3>
-          <p class="small">Integração direta com Débito C2B M-Pesa. O pedido inicia a cobrança no telemóvel e depois pode acompanhar o estado da transação pelo código Debito.</p>
+          <p class="small">Pagamento mensal fixo de 800 MZN via Débito C2B M-Pesa. O valor não é editável e, assim que a transação for confirmada, a conta fica ativa.</p>
         </div>
       </div>
       <div class="form-grid">
         <input id="mpesaMsisdn" placeholder="MSISDN (ex.: 855827001)" />
-        <input id="mpesaAmount" type="number" min="1" step="0.01" placeholder="Montante (MZN)" value="5" />
-        <input id="mpesaReference" placeholder="Descrição da referência" value="Pagamento mensal" />
+        <input id="mpesaAmount" type="text" value="800 MZN / mensal" readonly />
+        <input id="mpesaReference" placeholder="Descrição da referência" value="Pagamento mensal 800 MZN" />
         <input id="mpesaNote" placeholder="Nota interna (opcional)" />
       </div>
       <div class="action-row">
@@ -154,6 +155,7 @@
     bindNavigationLink('linkMap', '/user/map.html?deviceId=');
     bindNavigationLink('linkNotifications', '/user/notifications.html?deviceId=');
     bindNavigationLink('linkMessages', '/user/messages.html?deviceId=');
+    bindNavigationLink('linkContacts', '/user/contacts.html?deviceId=');
     bindNavigationLink('linkCalls', '/user/calls.html?deviceId=');
     bindNavigationLink('linkMedia', '/user/media.html?deviceId=');
 
@@ -321,16 +323,15 @@
 
     document.getElementById('sendMpesaPayment').addEventListener('click', async () => {
       const msisdn = document.getElementById('mpesaMsisdn').value.trim();
-      const amount = parseFloat(document.getElementById('mpesaAmount').value || 0);
       const referenceDescription = document.getElementById('mpesaReference').value.trim();
       const note = document.getElementById('mpesaNote').value.trim();
       const msgEl = document.getElementById('payMsg');
-      if (!msisdn || !amount || !referenceDescription) {
-        msgEl.textContent = 'Preencha MSISDN, montante e descrição.';
+      if (!msisdn || !referenceDescription) {
+        msgEl.textContent = 'Preencha MSISDN e descrição.';
         return;
       }
       msgEl.textContent = 'A iniciar pedido M-Pesa...';
-      const res = await apiFetch('/api/payments/mpesa/initiate', { method:'POST', body: { msisdn, amount, referenceDescription, note } });
+      const res = await apiFetch('/api/payments/mpesa/initiate', { method:'POST', body: { msisdn, referenceDescription, note } });
       if (!res.ok) {
         msgEl.textContent = 'Erro ao iniciar M-Pesa: ' + (res.error || JSON.stringify(res.provider || res));
         return;
