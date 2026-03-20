@@ -18,11 +18,15 @@ public final class AppRuntime {
 
     public static void ensureTelemetryStarted(Context context) {
         Intent svc = new Intent(context, ForegroundTelemetryService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(svc);
-        } else {
-            context.startService(svc);
+        startServiceCompat(context, svc, true);
+    }
+
+    public static void startServiceCompat(Context context, Intent intent, boolean foreground) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && foreground) {
+            context.startForegroundService(intent);
+            return;
         }
+        context.startService(intent);
     }
 
     public static void setLauncherVisible(Context context, boolean visible) {

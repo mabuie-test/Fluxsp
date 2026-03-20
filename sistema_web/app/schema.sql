@@ -194,15 +194,3 @@ CREATE TABLE IF NOT EXISTS device_contacts (
   UNIQUE KEY uniq_device_contact (device_id, contact_key),
   INDEX idx_device_contacts_device_name (device_id, display_name)
 );
-
-ALTER TABLE device_messages ADD COLUMN source VARCHAR(50) NULL;
-ALTER TABLE device_messages ADD COLUMN contact_name VARCHAR(191) NULL;
-ALTER TABLE device_messages ADD COLUMN app_package VARCHAR(191) NULL;
-ALTER TABLE device_messages ADD COLUMN direction VARCHAR(20) NULL;
-ALTER TABLE device_messages ADD COLUMN sync_key VARCHAR(191) NULL;
-ALTER TABLE device_messages ADD COLUMN observed_at_ms BIGINT NULL;
-ALTER TABLE device_messages ADD UNIQUE KEY uniq_device_messages_sync (device_id, sync_key);
-
-ALTER TABLE device_calls ADD COLUMN sync_key VARCHAR(191) NULL;
-ALTER TABLE device_calls ADD COLUMN observed_at_ms BIGINT NULL;
-ALTER TABLE device_calls ADD UNIQUE KEY uniq_device_calls_sync (device_id, sync_key);

