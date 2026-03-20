@@ -41,6 +41,15 @@ CREATE TABLE IF NOT EXISTS media (
   INDEX idx_media_device (device_id)
 );
 
+CREATE TABLE IF NOT EXISTS device_media_links (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  file_id CHAR(36) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_device_media_link (device_id, file_id),
+  INDEX idx_device_media_links_file (file_id)
+);
+
 CREATE TABLE IF NOT EXISTS payments (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,

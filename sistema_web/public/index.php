@@ -292,10 +292,11 @@ function device_query_sql(string $whereSql = '1=1'): string {
 }
 
 function recent_call_recordings_for_device(string $deviceId, array $user): array {
-    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath
+    $st = db()->prepare("SELECT DISTINCT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath
         FROM media m
+        LEFT JOIN device_media_links dml ON dml.file_id = m.file_id
         LEFT JOIN media_metadata mm ON mm.file_id = m.file_id
-        WHERE m.device_id = ?
+        WHERE (m.device_id = ? OR dml.device_id = ?)
           AND (
             m.filename LIKE 'call_%'
             OR mm.capture_kind = 'call_audio'
@@ -303,8 +304,13 @@ function recent_call_recordings_for_device(string $deviceId, array $user): array
           )
         ORDER BY m.upload_date DESC
         LIMIT 120");
-    $st->execute([$deviceId]);
+    $st->execute([$deviceId, $deviceId]);
     return array_map(fn ($row) => format_media_row($row, $user), $st->fetchAll());
+}
+
+function ensure_device_media_link(string $deviceId, string $fileId): void {
+    $ins = db()->prepare('INSERT INTO device_media_links(device_id, file_id) VALUES(?,?) ON DUPLICATE KEY UPDATE created_at = created_at');
+    $ins->execute([$deviceId, $fileId]);
 }
 
 function enrich_call_items(array $items, string $deviceId, array $user): array {
@@ -1232,14 +1238,15 @@ try {
         $pageSize = max(1, min(60, (int)($_GET['pageSize'] ?? 24)));
         $offset = ($page - 1) * $pageSize;
 
-        $countSt = db()->prepare('SELECT COUNT(*) FROM media WHERE device_id = ?');
-        $countSt->execute([$m['deviceId']]);
+        $countSt = db()->prepare('SELECT COUNT(DISTINCT m.file_id) FROM media m LEFT JOIN device_media_links dml ON dml.file_id = m.file_id WHERE m.device_id = ? OR dml.device_id = ?');
+        $countSt->execute([$m['deviceId'], $m['deviceId']]);
         $total = (int)$countSt->fetchColumn();
 
-        $st = db()->prepare('SELECT file_id as fileId, filename, content_type as contentType, upload_date as uploadDate, checksum, device_id as deviceId, storage_path as storagePath FROM media WHERE device_id=? ORDER BY upload_date DESC LIMIT ? OFFSET ?');
+        $st = db()->prepare('SELECT DISTINCT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath FROM media m LEFT JOIN device_media_links dml ON dml.file_id = m.file_id WHERE m.device_id = ? OR dml.device_id = ? ORDER BY m.upload_date DESC LIMIT ? OFFSET ?');
         $st->bindValue(1, $m['deviceId']);
-        $st->bindValue(2, $pageSize, PDO::PARAM_INT);
-        $st->bindValue(3, $offset, PDO::PARAM_INT);
+        $st->bindValue(2, $m['deviceId']);
+        $st->bindValue(3, $pageSize, PDO::PARAM_INT);
+        $st->bindValue(4, $offset, PDO::PARAM_INT);
         $st->execute();
         $rows = $st->fetchAll();
         $files = array_map(fn ($row) => format_media_row($row, $u), $rows);
@@ -1286,6 +1293,7 @@ try {
         $st->execute([$checksum]);
         $existing = $st->fetch();
         if ($existing) {
+            ensure_device_media_link($m['deviceId'], (string)$existing['file_id']);
             record_metric($m['deviceId'], 'media_pipeline', 'upload', 'deduplicated', (int)round((microtime(true) - $startedAt) * 1000), null, ['fileId' => $existing['file_id']]);
             json_response(['ok' => true, 'exists' => true, 'fileId' => $existing['file_id']]);
         }
@@ -1311,6 +1319,7 @@ try {
             $checksum,
             $safeName,
         ]);
+        ensure_device_media_link($m['deviceId'], $fileId);
 
         $metaBody = [
             'captureMode' => trim((string)($_POST['captureMode'] ?? '')),

