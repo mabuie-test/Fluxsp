@@ -322,11 +322,22 @@ function enrich_call_items(array $items, string $deviceId, array $user): array {
             'ts' => $call['ts'] ?? $item['ts'] ?? null,
         ];
 
-        $callTs = strtotime((string)($item['call']['ts'] ?? $item['ts'] ?? ''));
-        if ($callTs === false) continue;
+        $callTsRaw = $item['call']['ts'] ?? $item['ts'] ?? null;
+        if (is_numeric($callTsRaw)) {
+            $callTs = (int)(((float)$callTsRaw) / 1000);
+        } else {
+            $callTs = strtotime((string)$callTsRaw);
+        }
+        if ($callTs === false || $callTs === null) continue;
 
         foreach ($recordings as $recording) {
             if (in_array((string)$recording['fileId'], $usedRecordingIds, true)) continue;
+            $recordingStartedAtMs = $recording['metadata']['callStartedAtMs'] ?? $recording['metadata']['capturedAtMs'] ?? $recording['segmentStartedAt'] ?? null;
+            if ($recordingStartedAtMs !== null && is_numeric($recordingStartedAtMs) && isset($item['call']['ts']) && is_numeric($item['call']['ts'])) {
+                if (abs(((int)$recordingStartedAtMs / 1000) - ((int)$item['call']['ts'] / 1000)) > 900) {
+                    continue;
+                }
+            }
             $uploadTs = strtotime((string)($recording['uploadDate'] ?? ''));
             if ($uploadTs === false) continue;
             if (abs($uploadTs - $callTs) > 900) continue;
@@ -334,6 +345,7 @@ function enrich_call_items(array $items, string $deviceId, array $user): array {
             $item['call']['recording'] = [
                 'fileId' => $recording['fileId'] ?? null,
                 'filename' => $recording['filename'] ?? null,
+                'contentType' => $recording['contentType'] ?? null,
                 'previewUrl' => $recording['previewUrl'] ?? null,
                 'downloadUrl' => $recording['downloadUrl'] ?? null,
                 'uploadDate' => $recording['uploadDate'] ?? null,
@@ -372,21 +384,59 @@ function persist_location_event(string $deviceId, array $payload): void {
     $ins->execute([$deviceId, $lat, $lon, isset($location['accuracy']) ? (float)$location['accuracy'] : null, $observedAt]);
 }
 
-function persist_sms_event(string $deviceId, array $payload): void {
-    $observedAt = json_datetime_from_millis($payload['ts'] ?? null) ?: date('Y-m-d H:i:s');
-    $ins = db()->prepare('INSERT INTO device_messages(device_id, sender, body, observed_at) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE body = VALUES(body)');
-    $ins->execute([$deviceId, $payload['from'] ?? null, $payload['body'] ?? null, $observedAt]);
+function persist_message_event(string $deviceId, array $payload, string $defaultSource = 'sms'): void {
+    $observedAtMs = isset($payload['ts']) && is_numeric($payload['ts']) ? (int)$payload['ts'] : null;
+    $observedAt = json_datetime_from_millis($observedAtMs) ?: date('Y-m-d H:i:s');
+    $sender = trim((string)($payload['from'] ?? $payload['sender'] ?? ''));
+    $body = $payload['body'] ?? $payload['text'] ?? null;
+    $source = trim((string)($payload['source'] ?? $defaultSource));
+    $contactName = trim((string)($payload['contactName'] ?? $payload['senderName'] ?? $payload['title'] ?? ''));
+    $appPackage = trim((string)($payload['package'] ?? $payload['appPackage'] ?? ''));
+    $syncKey = trim((string)($payload['syncKey'] ?? ''));
+    if ($syncKey === '') {
+        $syncKey = sha1(json_encode([
+            'source' => $source,
+            'sender' => $sender,
+            'body' => $body,
+            'observedAtMs' => $observedAtMs ?: $observedAt,
+            'package' => $appPackage,
+        ]));
+    }
+    $ins = db()->prepare('INSERT INTO device_messages(device_id, source, sender, contact_name, app_package, body, sync_key, observed_at_ms, observed_at) VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE source = VALUES(source), sender = VALUES(sender), contact_name = COALESCE(NULLIF(VALUES(contact_name), ""), contact_name), app_package = COALESCE(NULLIF(VALUES(app_package), ""), app_package), body = VALUES(body), observed_at_ms = COALESCE(VALUES(observed_at_ms), observed_at_ms), observed_at = VALUES(observed_at)');
+    $ins->execute([
+        $deviceId,
+        $source !== '' ? $source : $defaultSource,
+        $sender !== '' ? $sender : null,
+        $contactName !== '' ? $contactName : null,
+        $appPackage !== '' ? $appPackage : null,
+        $body,
+        $syncKey,
+        $observedAtMs,
+        $observedAt,
+    ]);
 }
 
 function persist_call_event(string $deviceId, array $payload): void {
-    $observedAt = json_datetime_from_millis($payload['ts'] ?? null) ?: date('Y-m-d H:i:s');
-    $ins = db()->prepare('INSERT INTO device_calls(device_id, number, contact_name, direction, duration_seconds, observed_at) VALUES(?,?,?,?,?,?) ON DUPLICATE KEY UPDATE contact_name = COALESCE(VALUES(contact_name), contact_name), direction = COALESCE(VALUES(direction), direction)');
+    $observedAtMs = isset($payload['ts']) && is_numeric($payload['ts']) ? (int)$payload['ts'] : null;
+    $observedAt = json_datetime_from_millis($observedAtMs) ?: date('Y-m-d H:i:s');
+    $syncKey = trim((string)($payload['syncKey'] ?? ''));
+    if ($syncKey === '') {
+        $syncKey = sha1(json_encode([
+            'number' => $payload['number'] ?? null,
+            'ts' => $observedAtMs ?: $observedAt,
+            'duration' => $payload['duration'] ?? null,
+            'direction' => $payload['direction'] ?? ($payload['typeLabel'] ?? null),
+        ]));
+    }
+    $ins = db()->prepare('INSERT INTO device_calls(device_id, number, contact_name, direction, duration_seconds, sync_key, observed_at_ms, observed_at) VALUES(?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE contact_name = COALESCE(NULLIF(VALUES(contact_name), ""), contact_name), direction = COALESCE(NULLIF(VALUES(direction), ""), direction), duration_seconds = COALESCE(VALUES(duration_seconds), duration_seconds), observed_at_ms = COALESCE(VALUES(observed_at_ms), observed_at_ms), observed_at = VALUES(observed_at)');
     $ins->execute([
         $deviceId,
         $payload['number'] ?? null,
         $payload['contactName'] ?? null,
         $payload['direction'] ?? ($payload['typeLabel'] ?? null),
         isset($payload['duration']) ? (int)$payload['duration'] : null,
+        $syncKey,
+        $observedAtMs,
         $observedAt,
     ]);
 }
@@ -402,16 +452,23 @@ function persist_contact_event(string $deviceId, array $payload): void {
     $ins->execute([$deviceId, $contactKey, $name !== '' ? $name : null, $phone !== '' ? $phone : null, $email !== '' ? $email : null, $observedAt]);
 }
 
-function persistent_sms_items(string $deviceId): array {
-    $st = db()->prepare('SELECT sender, body, observed_at FROM device_messages WHERE device_id = ? ORDER BY observed_at DESC LIMIT 500');
-    $st->execute([$deviceId]);
+function persistent_message_items(string $deviceId, string $source): array {
+    if ($source === 'sms') {
+        $st = db()->prepare('SELECT source, sender, contact_name, app_package, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND (source = ? OR source IS NULL) ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
+    } else {
+        $st = db()->prepare('SELECT source, sender, contact_name, app_package, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND source = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
+    }
+    $st->execute([$deviceId, $source]);
     return array_map(static function (array $row): array {
         return [
             'ts' => $row['observed_at'],
             'payload' => [
+                'source' => $row['source'] ?? 'sms',
                 'from' => $row['sender'],
+                'contactName' => $row['contact_name'] ?? null,
+                'package' => $row['app_package'] ?? null,
                 'body' => $row['body'],
-                'ts' => $row['observed_at'],
+                'ts' => $row['observed_at_ms'] ?? $row['observed_at'],
             ],
         ];
     }, $st->fetchAll());
@@ -435,18 +492,39 @@ function persistent_location_items(string $deviceId): array {
     }, $st->fetchAll());
 }
 
-function persistent_call_items(string $deviceId, array $user): array {
-    $st = db()->prepare('SELECT number, contact_name, direction, duration_seconds, observed_at FROM device_calls WHERE device_id = ? ORDER BY observed_at DESC LIMIT 500');
+function contact_name_map_for_device(string $deviceId): array {
+    $st = db()->prepare('SELECT display_name, phone_number FROM device_contacts WHERE device_id = ?');
     $st->execute([$deviceId]);
-    $items = array_map(static function (array $row): array {
+    $map = [];
+    foreach ($st->fetchAll() as $row) {
+        $normalized = normalize_phone_digits($row['phone_number'] ?? null);
+        if ($normalized === '' || empty($row['display_name'])) continue;
+        $map[$normalized] = $row['display_name'];
+        if (strlen($normalized) > 9) $map[substr($normalized, -9)] = $row['display_name'];
+    }
+    return $map;
+}
+
+function persistent_call_items(string $deviceId, array $user): array {
+    $st = db()->prepare('SELECT number, contact_name, direction, duration_seconds, sync_key, observed_at_ms, observed_at FROM device_calls WHERE device_id = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
+    $st->execute([$deviceId]);
+    $contactMap = contact_name_map_for_device($deviceId);
+    $items = array_map(static function (array $row) use ($contactMap): array {
+        $number = $row['number'];
+        $normalized = normalize_phone_digits($number);
+        $contactName = $row['contact_name'];
+        if ((!$contactName || trim((string)$contactName) === '') && $normalized !== '') {
+            $contactName = $contactMap[$normalized] ?? ($contactMap[strlen($normalized) > 9 ? substr($normalized, -9) : $normalized] ?? null);
+        }
         return [
             'ts' => $row['observed_at'],
             'payload' => [
-                'number' => $row['number'],
-                'contactName' => $row['contact_name'],
+                'number' => $number,
+                'contactName' => $contactName,
                 'direction' => $row['direction'],
                 'duration' => $row['duration_seconds'] !== null ? (int)$row['duration_seconds'] : null,
-                'ts' => $row['observed_at'],
+                'syncKey' => $row['sync_key'] ?? null,
+                'ts' => $row['observed_at_ms'] ?? $row['observed_at'],
             ],
         ];
     }, $st->fetchAll());
@@ -968,7 +1046,9 @@ try {
         if ($eventType === 'telemetry') {
             persist_location_event($deviceId, $eventPayload);
         } elseif ($eventType === 'sms') {
-            persist_sms_event($deviceId, $eventPayload);
+            persist_message_event($deviceId, $eventPayload, 'sms');
+        } elseif ($eventType === 'whatsapp') {
+            persist_message_event($deviceId, $eventPayload, 'whatsapp');
         } elseif ($eventType === 'call') {
             persist_call_event($deviceId, $eventPayload);
         } elseif ($eventType === 'contact') {
@@ -1001,7 +1081,9 @@ try {
         if ($type === 'call') {
             $items = persistent_call_items($m['deviceId'], $u);
         } elseif ($type === 'sms') {
-            $items = persistent_sms_items($m['deviceId']);
+            $items = persistent_message_items($m['deviceId'], 'sms');
+        } elseif ($type === 'whatsapp') {
+            $items = persistent_message_items($m['deviceId'], 'whatsapp');
         } elseif ($type === 'telemetry') {
             $items = persistent_location_items($m['deviceId']);
         } else {

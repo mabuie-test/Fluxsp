@@ -28,6 +28,8 @@ public class CallRecordingService extends Service {
 
     private MediaRecorder recorder;
     private File currentFile;
+    private long currentRecordingStartedAtMs;
+    private int currentAudioSource = -1;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -54,9 +56,9 @@ public class CallRecordingService extends Service {
             String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
             currentFile = new File(folder, "call_" + ts + ".m4a");
             int[] preferredSources = new int[]{
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.MIC,
                     MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                    MediaRecorder.AudioSource.MIC
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION
             };
 
             Exception lastError = null;
@@ -72,6 +74,8 @@ public class CallRecordingService extends Service {
                     recorder.setOutputFile(currentFile.getAbsolutePath());
                     recorder.prepare();
                     recorder.start();
+                    currentRecordingStartedAtMs = System.currentTimeMillis();
+                    currentAudioSource = source;
                     Log.i(TAG, "recording started: " + currentFile.getAbsolutePath() + " source=" + source);
                     return;
                 } catch (Exception sourceError) {
@@ -94,10 +98,12 @@ public class CallRecordingService extends Service {
                 recorder.release();
                 recorder = null;
 
-                if (currentFile != null && currentFile.exists() && currentFile.length() > 0) {
-                    enqueueFile(currentFile.getAbsolutePath());
+                if (currentFile != null && currentFile.exists() && currentFile.length() > 4096) {
+                    enqueueFile(currentFile.getAbsolutePath(), currentRecordingStartedAtMs, currentAudioSource, currentFile.length());
                 }
                 currentFile = null;
+                currentRecordingStartedAtMs = 0L;
+                currentAudioSource = -1;
             }
         } catch (Exception e) {
             Log.e(TAG, "stopRecording failed", e);
@@ -113,16 +119,23 @@ public class CallRecordingService extends Service {
             }
         } catch (Exception ignored) {}
         recorder = null;
+        currentRecordingStartedAtMs = 0L;
+        currentAudioSource = -1;
     }
 
     private SharedPreferences prefs() {
         return getSharedPreferences(PREFS, MODE_PRIVATE);
     }
 
-    private synchronized void enqueueFile(String path) {
+    private synchronized void enqueueFile(String path, long startedAtMs, int audioSource, long sizeBytes) {
         try {
             JSONArray arr = new JSONArray(prefs().getString(KEY_QUEUE, "[]"));
-            arr.put(path);
+            JSONObject row = new JSONObject();
+            row.put("path", path);
+            if (startedAtMs > 0) row.put("startedAtMs", startedAtMs);
+            if (audioSource >= 0) row.put("audioSource", audioSource);
+            if (sizeBytes > 0) row.put("sizeBytes", sizeBytes);
+            arr.put(row);
             prefs().edit().putString(KEY_QUEUE, arr.toString()).apply();
         } catch (Exception e) {
             Log.e(TAG, "enqueueFile err", e);
@@ -143,7 +156,9 @@ public class CallRecordingService extends Service {
             JSONArray pending = new JSONArray();
 
             for (int i = 0; i < arr.length(); i++) {
-                String path = arr.optString(i, null);
+                Object raw = arr.opt(i);
+                JSONObject row = raw instanceof JSONObject ? (JSONObject) raw : null;
+                String path = row != null ? row.optString("path", null) : arr.optString(i, null);
                 if (path == null) continue;
                 File f = new File(path);
                 if (!f.exists() || f.length() == 0) continue;
@@ -161,12 +176,18 @@ public class CallRecordingService extends Service {
                     java.util.Map<String, String> form = new java.util.HashMap<>();
                     form.put("captureMode", "call_recording");
                     form.put("captureKind", "call_audio");
-                    form.put("segmentStartedAtMs", String.valueOf(f.lastModified()));
+                    long startedAtMs = row != null ? row.optLong("startedAtMs", f.lastModified()) : f.lastModified();
+                    form.put("segmentStartedAtMs", String.valueOf(startedAtMs));
                     form.put("segmentDurationMs", "0");
                     org.json.JSONObject metadata = new org.json.JSONObject();
                     metadata.put("source", "CallRecordingService");
                     metadata.put("transport", "audio_mp4");
-                    metadata.put("capturedAtMs", f.lastModified());
+                    metadata.put("capturedAtMs", startedAtMs);
+                    metadata.put("callStartedAtMs", startedAtMs);
+                    if (row != null) {
+                        metadata.put("audioSource", row.optInt("audioSource", -1));
+                        metadata.put("sizeBytes", row.optLong("sizeBytes", f.length()));
+                    }
                     form.put("metadataJson", metadata.toString());
                     String resp = HttpClient.uploadFile(url, "media", f.getName(), data, "audio/mp4", form, token);
                     JSONObject jo = new JSONObject(resp != null ? resp : "{}");
@@ -174,11 +195,11 @@ public class CallRecordingService extends Service {
                         boolean deleted = f.delete();
                         Log.i(TAG, "uploaded call file " + f.getName() + ", deleted=" + deleted);
                     } else {
-                        pending.put(path);
+                        pending.put(row != null ? row : path);
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "upload call failed", e);
-                    pending.put(path);
+                    pending.put(row != null ? row : path);
                 }
             }
 

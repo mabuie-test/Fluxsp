@@ -51,7 +51,7 @@
           <div><strong>Número:</strong> ${number}</div>
           <div><strong>Direção:</strong> ${dir}</div>
           <div><strong>Duração:</strong> ${dur}</div>
-          <div>${recording?.previewUrl ? `<audio controls preload="metadata"><source src="${recording.previewUrl}" type="audio/mp4"></audio> <a href="${recording.downloadUrl}" target="_blank" rel="noopener">Descarregar áudio</a>` : 'Sem gravação disponível'}</div>
+          <div>${recording?.previewUrl ? `<audio controls preload="metadata"><source src="${recording.previewUrl}" type="${recording.contentType || 'audio/mp4'}"></audio> <a href="${recording.downloadUrl}" target="_blank" rel="noopener">Descarregar áudio</a>` : 'Sem gravação disponível'}</div>
         </div>`;
         ul.appendChild(li);
       });

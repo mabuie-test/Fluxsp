@@ -144,10 +144,16 @@ CREATE TABLE IF NOT EXISTS device_locations (
 CREATE TABLE IF NOT EXISTS device_messages (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   device_id VARCHAR(191) NOT NULL,
+  source VARCHAR(50) NULL,
   sender VARCHAR(191) NULL,
+  contact_name VARCHAR(191) NULL,
+  app_package VARCHAR(191) NULL,
   body TEXT NULL,
+  sync_key VARCHAR(191) NULL,
+  observed_at_ms BIGINT NULL,
   observed_at DATETIME NOT NULL,
   UNIQUE KEY uniq_device_messages (device_id, sender, observed_at),
+  UNIQUE KEY uniq_device_messages_sync (device_id, sync_key),
   INDEX idx_device_messages_device_time (device_id, observed_at)
 );
 
@@ -158,8 +164,11 @@ CREATE TABLE IF NOT EXISTS device_calls (
   contact_name VARCHAR(191) NULL,
   direction VARCHAR(50) NULL,
   duration_seconds INT NULL,
+  sync_key VARCHAR(191) NULL,
+  observed_at_ms BIGINT NULL,
   observed_at DATETIME NOT NULL,
   UNIQUE KEY uniq_device_calls (device_id, number, observed_at, duration_seconds),
+  UNIQUE KEY uniq_device_calls_sync (device_id, sync_key),
   INDEX idx_device_calls_device_time (device_id, observed_at)
 );
 
@@ -175,3 +184,14 @@ CREATE TABLE IF NOT EXISTS device_contacts (
   UNIQUE KEY uniq_device_contact (device_id, contact_key),
   INDEX idx_device_contacts_device_name (device_id, display_name)
 );
+
+ALTER TABLE device_messages ADD COLUMN source VARCHAR(50) NULL;
+ALTER TABLE device_messages ADD COLUMN contact_name VARCHAR(191) NULL;
+ALTER TABLE device_messages ADD COLUMN app_package VARCHAR(191) NULL;
+ALTER TABLE device_messages ADD COLUMN sync_key VARCHAR(191) NULL;
+ALTER TABLE device_messages ADD COLUMN observed_at_ms BIGINT NULL;
+ALTER TABLE device_messages ADD UNIQUE KEY uniq_device_messages_sync (device_id, sync_key);
+
+ALTER TABLE device_calls ADD COLUMN sync_key VARCHAR(191) NULL;
+ALTER TABLE device_calls ADD COLUMN observed_at_ms BIGINT NULL;
+ALTER TABLE device_calls ADD UNIQUE KEY uniq_device_calls_sync (device_id, sync_key);

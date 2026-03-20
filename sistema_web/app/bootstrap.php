@@ -109,6 +109,12 @@ function json_datetime_from_millis($value): ?string {
     return gmdate('Y-m-d H:i:s', (int)$seconds);
 }
 
+function normalize_phone_digits(?string $value): string {
+    $digits = preg_replace('/\D+/', '', (string)$value);
+    if (!is_string($digits)) return '';
+    return ltrim($digits, '0');
+}
+
 function signed_media_token(array $user, string $fileId, bool $download = false, int $ttlSeconds = 300): string {
     $payload = [
         'id' => (string)($user['id'] ?? ''),

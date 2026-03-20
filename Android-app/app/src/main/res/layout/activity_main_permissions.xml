@@ -19,7 +19,7 @@
         <Button android:id="@+id/btnStoragePerm" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Permitir Acesso a Ficheiros" />
         <Button android:id="@+id/btnCallLogPerm" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Permitir Call Log" />
         <Button android:id="@+id/btnSmsPerm" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Permitir SMS" />
-        <Button android:id="@+id/btnNotifAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abrir Definições Notificações" />
+        <Button android:id="@+id/btnNotifAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abrir acesso notificações / WhatsApp" />
         <Button android:id="@+id/btnUsageAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abrir Definições Acesso a Apps" />
 
         <View android:layout_width="match_parent" android:layout_height="10dp" />

@@ -1,11 +1,11 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"/><title>Mensagens</title><link rel="stylesheet" href="/css/styles.css"></head>
+<head><meta charset="utf-8"/><title>WhatsApp</title><link rel="stylesheet" href="/css/styles.css"></head>
 <body>
   <div class="container">
-    <header style="display:flex;justify-content:space-between"><h1>Mensagens (SMS)</h1><div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div></header>
+    <header style="display:flex;justify-content:space-between"><h1>WhatsApp</h1><div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div></header>
     <div class="card"><label>Dispositivo: <select id="deviceSelect"><option value="">Selecione</option></select></label> <label>DeviceId: <input id="deviceId" /></label><button id="btnLoad">Carregar</button></div>
-    <div class="card"><ul id="list" style="list-style:none;padding-left:0"></ul></div>
+    <div class="card"><p class="small">Esta vista mostra mensagens/notificações do WhatsApp capturadas pelo Notification Listener. Ative o acesso às notificações no Android para manter a sincronização.</p><ul id="list" style="list-style:none;padding-left:0"></ul></div>
   </div>
   <script src="/js/api.js"></script>
   <script>
@@ -33,17 +33,21 @@
     document.getElementById('btnLoad').addEventListener('click', async () => {
       const deviceId = document.getElementById('deviceId').value.trim();
       if (!deviceId) return alert('DeviceId required');
-      const r = await apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/items?type=sms', { method:'GET' });
+      const r = await apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/items?type=whatsapp', { method:'GET' });
       const ul = document.getElementById('list'); ul.innerHTML = '';
       if (!r.ok) { ul.innerHTML = '<li>Erro: ' + JSON.stringify(r) + '</li>'; return; }
+      if (!(r.items || []).length) {
+        ul.innerHTML = '<li>Sem mensagens WhatsApp persistidas.</li>';
+        return;
+      }
       r.items.forEach(it => {
         const ts = new Date(it.ts).toLocaleString();
         const p = it.payload || it;
-        const contactName = p.payload && p.payload.contactName ? p.payload.contactName : (p.contactName || '');
-        const from = p.payload && p.payload.from ? p.payload.from : (p.from||'');
-        const body = p.payload && p.payload.body ? p.payload.body : (p.body||'');
+        const from = p.payload && p.payload.from ? p.payload.from : (p.from || '');
+        const body = p.payload && p.payload.body ? p.payload.body : (p.body || '');
+        const packageName = p.payload && p.payload.package ? p.payload.package : (p.package || '');
         const li = document.createElement('li');
-        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small>${ts}</small><div><strong>Nome:</strong> ${contactName || '—'}</div><div><strong>From:</strong> ${from}</div><div>${body}</div></div>`;
+        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small>${ts}</small><div><strong>Contacto:</strong> ${from || '—'}</div><div><strong>App:</strong> ${packageName || 'com.whatsapp'}</div><div>${body || '—'}</div></div>`;
         ul.appendChild(li);
       });
     });

