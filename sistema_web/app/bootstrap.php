@@ -100,3 +100,101 @@ function auth_user(bool $required = true): ?array {
 function is_admin(array $user): bool {
     return ($user['role'] ?? 'user') === 'admin';
 }
+
+
+function json_datetime_from_millis($value): ?string {
+    if ($value === null || $value === '') return null;
+    if (!is_numeric($value)) return null;
+    $seconds = ((float)$value) / 1000;
+    return gmdate('Y-m-d H:i:s', (int)$seconds);
+}
+
+function signed_media_token(array $user, string $fileId, bool $download = false, int $ttlSeconds = 300): string {
+    $payload = [
+        'id' => (string)($user['id'] ?? ''),
+        'role' => $user['role'] ?? 'user',
+        'email' => $user['email'] ?? null,
+        'fileId' => $fileId,
+        'download' => $download,
+        'scope' => 'media_access',
+        'exp' => time() + max(30, $ttlSeconds),
+    ];
+    return jwt_sign($payload);
+}
+
+function verify_signed_media_token(string $token, string $fileId, bool $download = false): ?array {
+    $payload = jwt_verify($token);
+    if (!$payload) return null;
+    if (($payload['scope'] ?? null) !== 'media_access') return null;
+    if (($payload['fileId'] ?? null) !== $fileId) return null;
+    if ((bool)($payload['download'] ?? false) !== $download) return null;
+    return $payload;
+}
+
+function record_metric(?string $deviceId, string $metricType, string $metricName, ?string $status = null, $valueMs = null, $valueNum = null, ?array $context = null): void {
+    try {
+        $st = db()->prepare('INSERT INTO system_metrics(device_id, metric_type, metric_name, status, value_ms, value_num, context_json) VALUES(?,?,?,?,?,?,?)');
+        $st->execute([
+            $deviceId,
+            $metricType,
+            $metricName,
+            $status,
+            $valueMs !== null ? (int)$valueMs : null,
+            $valueNum !== null ? $valueNum : null,
+            $context ? json_encode($context) : null,
+        ]);
+    } catch (Throwable $e) {
+        // métricas não devem quebrar o fluxo principal
+    }
+}
+
+
+function debito_config(): array {
+    global $config;
+    return $config['debito'] ?? [];
+}
+
+function debito_is_configured(): bool {
+    $cfg = debito_config();
+    return !empty($cfg['base_url']) && !empty($cfg['api_token']) && !empty($cfg['wallet_id']);
+}
+
+function debito_request(string $method, string $path, ?array $payload = null): array {
+    $cfg = debito_config();
+    if (!debito_is_configured()) {
+        throw new RuntimeException('debito_not_configured');
+    }
+
+    $url = rtrim((string)$cfg['base_url'], '/') . $path;
+    $ch = curl_init($url);
+    $headers = [
+        'Authorization: Bearer ' . $cfg['api_token'],
+        'Content-Type: application/json',
+        'Accept: application/json',
+    ];
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST => strtoupper($method),
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_TIMEOUT => 30,
+    ]);
+    if ($payload !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    }
+    $raw = curl_exec($ch);
+    if ($raw === false) {
+        $error = curl_error($ch);
+        curl_close($ch);
+        throw new RuntimeException('debito_request_failed:' . $error);
+    }
+    $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    $decoded = json_decode($raw, true);
+    return [
+        'status' => $status,
+        'ok' => $status >= 200 && $status < 300,
+        'body' => is_array($decoded) ? $decoded : ['raw' => $raw],
+        'raw' => $raw,
+    ];
+}

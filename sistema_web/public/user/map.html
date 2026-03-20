@@ -33,6 +33,7 @@
 
     <div class="card">
       <div class="controls">
+        <select id="deviceSelect" title="Dispositivo"><option value="">Selecione um dispositivo</option></select>
         <input id="deviceId" placeholder="Cole aqui o deviceId (ou abrir com ?deviceId=...)" />
         <select id="timeRange" title="Filtro temporal">
           <option value="24h">Últimas 24h</option>
@@ -100,6 +101,23 @@
     // map state
     let map=null, markers=[], lastMarker=null, poly=null, latlngs=[];
     let socket=null, currentDevice=null, autoRefreshHandle=null;
+
+    async function loadDeviceOptions() {
+      const res = await apiFetch('/api/devices/my', { method:'GET' });
+      if (!res.ok) return;
+      const sel = document.getElementById('deviceSelect');
+      sel.innerHTML = '<option value="">Selecione um dispositivo</option>';
+      (res.devices || []).forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = (d.model || d.name || d.deviceId) + (d.model || d.name ? ` (${d.deviceId})` : '');
+        if (d.deviceId === document.getElementById('deviceId').value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => {
+        document.getElementById('deviceId').value = sel.value;
+      });
+    }
 
     function ensureMap(){
       if (!map) {
@@ -268,6 +286,7 @@
 
     // autoload from querystring
     const q = new URLSearchParams(window.location.search);
+    loadDeviceOptions();
     if (q.get('deviceId')) { document.getElementById('deviceId').value = q.get('deviceId'); setTimeout(()=>{ document.getElementById('btnLoad').click(); }, 300); }
   </script>
 </body>
