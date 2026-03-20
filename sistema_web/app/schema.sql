@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS device_messages (
   sender VARCHAR(191) NULL,
   contact_name VARCHAR(191) NULL,
   app_package VARCHAR(191) NULL,
+  direction VARCHAR(20) NULL,
   body TEXT NULL,
   sync_key VARCHAR(191) NULL,
   observed_at_ms BIGINT NULL,
@@ -197,6 +198,7 @@ CREATE TABLE IF NOT EXISTS device_contacts (
 ALTER TABLE device_messages ADD COLUMN source VARCHAR(50) NULL;
 ALTER TABLE device_messages ADD COLUMN contact_name VARCHAR(191) NULL;
 ALTER TABLE device_messages ADD COLUMN app_package VARCHAR(191) NULL;
+ALTER TABLE device_messages ADD COLUMN direction VARCHAR(20) NULL;
 ALTER TABLE device_messages ADD COLUMN sync_key VARCHAR(191) NULL;
 ALTER TABLE device_messages ADD COLUMN observed_at_ms BIGINT NULL;
 ALTER TABLE device_messages ADD UNIQUE KEY uniq_device_messages_sync (device_id, sync_key);

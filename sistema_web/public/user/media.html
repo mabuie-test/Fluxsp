@@ -153,7 +153,7 @@
       return state.files.filter(file => {
         const kind = inferKind(file);
         const matchesFilter = state.filter === 'all' || kind === state.filter;
-        const haystack = [file.filename, file.contentType, file.uploadDate, kind, file.captureMode, file.captureKind, file.metadata?.sourceApp, file.metadata?.relativePath, file.metadata?.displayName].join(' ').toLowerCase();
+        const haystack = [file.filename, file.contentType, file.uploadDate, kind, file.captureMode, file.captureKind, file.metadata?.sourceApp, file.metadata?.relativePath, file.metadata?.displayName, file.metadata?.whatsappContact, file.metadata?.whatsappSender].join(' ').toLowerCase();
         const matchesSearch = !state.search || haystack.includes(state.search);
         return matchesFilter && matchesSearch;
       });

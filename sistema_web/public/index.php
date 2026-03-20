@@ -398,6 +398,7 @@ function persist_message_event(string $deviceId, array $payload, string $default
     $source = trim((string)($payload['source'] ?? $defaultSource));
     $contactName = trim((string)($payload['contactName'] ?? $payload['senderName'] ?? $payload['title'] ?? ''));
     $appPackage = trim((string)($payload['package'] ?? $payload['appPackage'] ?? ''));
+    $direction = trim((string)($payload['direction'] ?? ''));
     $syncKey = trim((string)($payload['syncKey'] ?? ''));
     if ($syncKey === '') {
         $syncKey = sha1(json_encode([
@@ -408,13 +409,14 @@ function persist_message_event(string $deviceId, array $payload, string $default
             'package' => $appPackage,
         ]));
     }
-    $ins = db()->prepare('INSERT INTO device_messages(device_id, source, sender, contact_name, app_package, body, sync_key, observed_at_ms, observed_at) VALUES(?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE source = VALUES(source), sender = VALUES(sender), contact_name = COALESCE(NULLIF(VALUES(contact_name), ""), contact_name), app_package = COALESCE(NULLIF(VALUES(app_package), ""), app_package), body = VALUES(body), observed_at_ms = COALESCE(VALUES(observed_at_ms), observed_at_ms), observed_at = VALUES(observed_at)');
+    $ins = db()->prepare('INSERT INTO device_messages(device_id, source, sender, contact_name, app_package, direction, body, sync_key, observed_at_ms, observed_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE source = VALUES(source), sender = VALUES(sender), contact_name = COALESCE(NULLIF(VALUES(contact_name), ""), contact_name), app_package = COALESCE(NULLIF(VALUES(app_package), ""), app_package), direction = COALESCE(NULLIF(VALUES(direction), ""), direction), body = VALUES(body), observed_at_ms = COALESCE(VALUES(observed_at_ms), observed_at_ms), observed_at = VALUES(observed_at)');
     $ins->execute([
         $deviceId,
         $source !== '' ? $source : $defaultSource,
         $sender !== '' ? $sender : null,
         $contactName !== '' ? $contactName : null,
         $appPackage !== '' ? $appPackage : null,
+        $direction !== '' ? $direction : null,
         $body,
         $syncKey,
         $observedAtMs,
@@ -460,9 +462,9 @@ function persist_contact_event(string $deviceId, array $payload): void {
 
 function persistent_message_items(string $deviceId, string $source): array {
     if ($source === 'sms') {
-        $st = db()->prepare('SELECT source, sender, contact_name, app_package, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND (source = ? OR source IS NULL) ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
+        $st = db()->prepare('SELECT source, sender, contact_name, app_package, direction, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND (source = ? OR source IS NULL) ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
     } else {
-        $st = db()->prepare('SELECT source, sender, contact_name, app_package, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND source = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
+        $st = db()->prepare('SELECT source, sender, contact_name, app_package, direction, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND source = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
     }
     $st->execute([$deviceId, $source]);
     return array_map(static function (array $row): array {
@@ -473,6 +475,7 @@ function persistent_message_items(string $deviceId, string $source): array {
                 'from' => $row['sender'],
                 'contactName' => $row['contact_name'] ?? null,
                 'package' => $row['app_package'] ?? null,
+                'direction' => $row['direction'] ?? null,
                 'body' => $row['body'],
                 'ts' => $row['observed_at_ms'] ?? $row['observed_at'],
             ],

