@@ -5,25 +5,30 @@
   <link rel="stylesheet" href="/css/styles.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
     #map{height:420px}
     .actions{display:flex;gap:8px;flex-wrap:wrap}
     .actions button{width:auto}
-    .small{font-size:.9em;color:#666}
+    .live-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+    .live-frame{width:100%;min-height:220px;max-height:420px;object-fit:contain;border-radius:14px;background:#0e1429;border:1px solid rgba(255,255,255,.08)}
+    .live-audio-list{display:grid;gap:10px}
+    .live-audio-item{padding:10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.03)}
   </style>
 </head>
 <body>
   <div class="container">
-    <header style="display:flex;justify-content:space-between">
-      <h1>My Device</h1>
-      <div><a href="/user/dashboard.html">Back</a> <button id="logout">Logout</button></div>
+    <header class="page-header">
+      <div>
+        <h1>My Device</h1>
+        <p class="small">Vista de controlo e streaming remoto live.</p>
+      </div>
+      <div class="action-row"><a class="btn" href="/user/dashboard.html">Back</a> <button id="logout">Logout</button></div>
     </header>
 
     <div class="card" id="deviceInfo">Loading...</div>
     <div class="card">
       <h3>Sessões de suporte</h3>
-      <p class="small">O consentimento de ecrã/áudio é dado uma única vez durante a configuração da app. Com o telemóvel online, o painel web pode iniciar ou parar sessões remotamente, sem aprovação local adicional na app.</p>
+      <p class="small">Quando uma sessão fica ativa, o Android passa a publicar frames de ecrã ou segmentos de áudio live, e esta página atualiza o stream quase em tempo real.</p>
       <div class="actions">
         <button id="btnRequestScreen">Pedir partilha de ecrã</button>
         <button id="btnRequestAudio">Pedir áudio temporário</button>
@@ -35,6 +40,28 @@
       <div id="activeSupport" class="small">A carregar estado...</div>
       <ul id="supportHistory" style="padding-left:20px"></ul>
     </div>
+
+    <div class="card">
+      <div class="section-header">
+        <div>
+          <h3>Live stream remoto</h3>
+          <p class="small" id="liveStreamHint">Sem sessão ativa.</p>
+        </div>
+        <div class="badge badge-muted" id="liveStreamBadge">Idle</div>
+      </div>
+      <div class="live-grid">
+        <div>
+          <video id="liveScreenVideo" class="live-frame" style="display:none" autoplay muted playsinline controls></video>
+          <img id="liveScreenFrame" class="live-frame" alt="Live screen frame" style="display:none" />
+          <div id="liveScreenEmpty" class="empty-state">Sem frames live de ecrã.</div>
+        </div>
+        <div>
+          <audio id="liveAudioPlayer" controls autoplay style="width:100%;display:none;margin-bottom:12px"></audio>
+          <div id="liveAudioList" class="live-audio-list"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="map" class="card"></div>
     <div class="card">
       <h3>History</h3>
@@ -49,13 +76,29 @@
     if (!deviceId) { alert('deviceId missing'); location.href='/user/dashboard.html'; }
     if (!localStorage.getItem('auth_token')) { location.href='/'; }
 
+    const liveState = {
+      activeSessionId: null,
+      pollHandle: null,
+      ws: null,
+      wsUrl: null,
+      seenScreenIds: new Set(),
+      seenAudioIds: new Set(),
+      screenQueue: [],
+      audioQueue: [],
+      screenTimer: null,
+      currentAudioId: null,
+      audioPlayer: null,
+      screenVideoListenerBound: false
+    };
+
     async function loadDevice(){
       const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' });
       const el = document.getElementById('deviceInfo');
       if (!r.ok) { el.innerText = 'Erro: ' + (r.error || JSON.stringify(r)); return; }
       const d = r.device;
       el.innerHTML = `<strong>DeviceId:</strong> ${d.deviceId} <br>
-                      <strong>Name:</strong> ${d.name || '-'} <br>
+                      <strong>IMEI:</strong> ${d.imei || d.deviceId || '-'} <br>
+                      <strong>Modelo:</strong> ${d.model || d.name || '-'} <br>
                       <strong>Last seen:</strong> ${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'} <br>
                       <strong>Online:</strong> ${d.isOnline ? 'Sim' : 'Não'} <br>
                       <strong>Consentimento remoto:</strong> ${d.consentAccepted ? 'OK' : 'Pendente'} <br>
@@ -70,7 +113,7 @@
       r.items.forEach(item => {
         const li = document.createElement('li');
         const ts = new Date(item.ts).toLocaleString();
-        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small class="small">${ts}</small><div>${JSON.stringify(item.payload)}</div></div>`;
+        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #304070"><small class="small">${ts}</small><div>${JSON.stringify(item.payload)}</div></div>`;
         ul.appendChild(li);
       });
       return r.items;
@@ -78,14 +121,7 @@
 
     async function requestSupport(requestType) {
       const note = document.getElementById('supportNote').value.trim();
-      const res = await apiFetch('/api/support-sessions/request', {
-        method:'POST',
-        body: {
-          deviceId,
-          requestType,
-          note
-        }
-      });
+      const res = await apiFetch('/api/support-sessions/request', { method:'POST', body: { deviceId, requestType, note } });
       let msg = 'Sessão iniciada com sucesso.';
       if (!res.ok && res.error === 'device_offline') msg = 'O dispositivo está offline e não pode iniciar suporte remoto agora.';
       else if (!res.ok && res.error === 'consent_required') msg = 'O dispositivo ainda não deu o consentimento remoto de ecrã/áudio.';
@@ -97,9 +133,7 @@
     async function stopSupportSession(sessionId) {
       if (!sessionId) return;
       const res = await apiFetch('/api/support-sessions/' + encodeURIComponent(sessionId) + '/stop', { method:'POST', body:{} });
-      document.getElementById('supportMsg').textContent = res.ok
-        ? 'Sessão parada.'
-        : 'Erro ao parar sessão: ' + (res.error || JSON.stringify(res));
+      document.getElementById('supportMsg').textContent = res.ok ? 'Sessão parada.' : 'Erro ao parar sessão: ' + (res.error || JSON.stringify(res));
       await loadSupportState();
     }
 
@@ -115,6 +149,197 @@
       if (!sessions.length) ul.innerHTML = '<li>Sem sessões recentes.</li>';
     }
 
+    function stopLivePolling() {
+      if (liveState.pollHandle) clearInterval(liveState.pollHandle);
+      liveState.pollHandle = null;
+    }
+
+    function disconnectLiveSocket() {
+      if (!liveState.ws) return;
+      try { liveState.ws.close(); } catch(e) {}
+      liveState.ws = null;
+    }
+
+    async function ensureLiveSocket(){
+      if (liveState.ws || liveState.wsUrl === false) return;
+      try {
+        if (!liveState.wsUrl) {
+          const cfg = await apiFetch('/api/realtime/config', { method:'GET' });
+          liveState.wsUrl = cfg.ok && cfg.wsUrl ? cfg.wsUrl : false;
+        }
+        if (!liveState.wsUrl) return;
+        const ws = new WebSocket(liveState.wsUrl);
+        ws.addEventListener('open', () => {
+          ws.send(JSON.stringify({ action:'join', deviceId }));
+          document.getElementById('liveStreamHint').textContent = 'Realtime websocket ligado. Polling continua como fallback.';
+        });
+        ws.addEventListener('message', async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.deviceId !== deviceId) return;
+            if (data.event === 'support_live_refresh' || data.event === 'support_session_changed') {
+              await loadSupportState();
+            }
+          } catch(e) {}
+        });
+        ws.addEventListener('close', () => { liveState.ws = null; });
+        ws.addEventListener('error', () => { try { ws.close(); } catch(e) {} });
+        liveState.ws = ws;
+      } catch (e) {
+        liveState.wsUrl = false;
+      }
+    }
+
+    function resetLiveView(reason = 'Sem sessão ativa.') {
+      stopLivePolling();
+      liveState.activeSessionId = null;
+      liveState.seenScreenIds = new Set();
+      liveState.seenAudioIds = new Set();
+      liveState.screenQueue = [];
+      liveState.audioQueue = [];
+      liveState.currentAudioId = null;
+      if (liveState.screenTimer) clearTimeout(liveState.screenTimer);
+      liveState.screenTimer = null;
+      document.getElementById('liveStreamHint').textContent = reason;
+      document.getElementById('liveStreamBadge').textContent = 'Idle';
+      document.getElementById('liveStreamBadge').className = 'badge badge-muted';
+      document.getElementById('liveScreenVideo').pause();
+      document.getElementById('liveScreenVideo').removeAttribute('src');
+      document.getElementById('liveScreenVideo').style.display = 'none';
+      document.getElementById('liveScreenFrame').style.display = 'none';
+      document.getElementById('liveScreenEmpty').style.display = 'block';
+      const liveAudioPlayer = document.getElementById('liveAudioPlayer');
+      liveAudioPlayer.pause();
+      liveAudioPlayer.removeAttribute('src');
+      liveAudioPlayer.style.display = 'none';
+      document.getElementById('liveAudioList').innerHTML = '<div class="empty-state">Sem segmentos live de áudio.</div>';
+    }
+
+    function ensureAudioPlayer(){
+      if (liveState.audioPlayer) return liveState.audioPlayer;
+      const player = document.getElementById('liveAudioPlayer');
+      player.addEventListener('ended', () => {
+        liveState.currentAudioId = null;
+        playNextAudioSegment();
+      });
+      player.addEventListener('error', () => {
+        liveState.currentAudioId = null;
+        playNextAudioSegment();
+      });
+      liveState.audioPlayer = player;
+      return player;
+    }
+
+    function playNextAudioSegment(){
+      if (liveState.currentAudioId || !liveState.audioQueue.length) return;
+      const next = liveState.audioQueue.shift();
+      if (!next) return;
+      liveState.currentAudioId = next.fileId;
+      const player = ensureAudioPlayer();
+      player.style.display = 'block';
+      player.src = next.previewUrl + (next.previewUrl.includes('?') ? '&' : '?') + '_live=' + encodeURIComponent(next.fileId + '-' + (next.segmentStartedAt || next.uploadDate || Date.now()));
+      player.play().catch(() => {
+        liveState.currentAudioId = null;
+      });
+    }
+
+    function pumpScreenQueue(frameIntervalMs){
+      if (liveState.screenTimer || !liveState.screenQueue.length) return;
+      const frame = liveState.screenQueue.shift();
+      const videoEl = document.getElementById('liveScreenVideo');
+      const frameEl = document.getElementById('liveScreenFrame');
+      const frameEmpty = document.getElementById('liveScreenEmpty');
+      const src = frame.previewUrl + (frame.previewUrl.includes('?') ? '&' : '?') + '_live=' + encodeURIComponent(frame.fileId + '-' + (frame.segmentStartedAt || frame.uploadDate || Date.now()));
+      if ((frame.contentType || '').startsWith('video/')) {
+        if (!liveState.screenVideoListenerBound) {
+          const resume = () => {
+            liveState.screenTimer = null;
+            pumpScreenQueue(frameIntervalMs);
+          };
+          videoEl.addEventListener('ended', resume);
+          videoEl.addEventListener('error', resume);
+          liveState.screenVideoListenerBound = true;
+        }
+        videoEl.src = src;
+        videoEl.style.display = 'block';
+        frameEl.style.display = 'none';
+        liveState.screenTimer = 'video';
+        videoEl.play().catch(()=>{
+          liveState.screenTimer = null;
+        });
+      } else {
+        frameEl.src = src;
+        frameEl.style.display = 'block';
+        videoEl.style.display = 'none';
+        frameEmpty.style.display = 'none';
+        liveState.screenTimer = setTimeout(() => {
+          liveState.screenTimer = null;
+          pumpScreenQueue(frameIntervalMs);
+        }, frameIntervalMs || 220);
+        return;
+      }
+      frameEmpty.style.display = 'none';
+    }
+
+    function enqueueLivePayload(live, session){
+      const frameIntervalMs = session?.stream?.frameIntervalMs || 220;
+      (live.screenFrames || []).forEach(frame => {
+        if (!frame?.fileId || liveState.seenScreenIds.has(frame.fileId)) return;
+        liveState.seenScreenIds.add(frame.fileId);
+        liveState.screenQueue.push(frame);
+      });
+      const audioList = document.getElementById('liveAudioList');
+      const audioSegments = live.audioSegments || [];
+      if (!audioSegments.length) {
+        audioList.innerHTML = '<div class="empty-state">Sem segmentos live de áudio.</div>';
+      } else {
+        audioList.innerHTML = audioSegments.map((segment, index) => `
+          <div class="live-audio-item">
+            <div class="small">${index === audioSegments.length - 1 ? 'Mais recente' : 'Segmento'} · ${new Date(segment.uploadDate).toLocaleString()}</div>
+            <div class="small">${segment.filename || segment.fileId}</div>
+            <audio controls preload="metadata"><source src="${segment.previewUrl}" type="${segment.contentType || 'audio/wav'}"></audio>
+            <a href="${segment.downloadUrl}" target="_blank" rel="noopener">Descarregar</a>
+          </div>
+        `).join('');
+      }
+      audioSegments.forEach(segment => {
+        if (!segment?.fileId || liveState.seenAudioIds.has(segment.fileId)) return;
+        liveState.seenAudioIds.add(segment.fileId);
+        liveState.audioQueue.push(segment);
+      });
+      pumpScreenQueue(frameIntervalMs);
+      playNextAudioSegment();
+    }
+
+    async function loadLiveState(session) {
+      if (!session || !session.sessionId) {
+        resetLiveView();
+        return;
+      }
+      const liveHint = document.getElementById('liveStreamHint');
+      const badge = document.getElementById('liveStreamBadge');
+      liveHint.textContent = `Sessão ${session.requestType} ativa com polling live a cada ${Math.round((session.stream?.pollIntervalMs || 5000) / 1000)}s.`;
+      badge.textContent = 'Live';
+      badge.className = 'badge badge-success';
+
+      const r = await apiFetch('/api/support-sessions/' + encodeURIComponent(session.sessionId) + '/live-state', { method:'GET' });
+      if (!r.ok) {
+        liveHint.textContent = 'Erro ao carregar stream live: ' + (r.error || JSON.stringify(r));
+        return;
+      }
+      const live = r.live || {};
+      if (!(live.screenFrames || []).length && !(live.audioSegments || []).length) {
+        const frameEl = document.getElementById('liveScreenFrame');
+        const frameEmpty = document.getElementById('liveScreenEmpty');
+        frameEl.style.display = 'none';
+        frameEmpty.style.display = 'block';
+        frameEmpty.textContent = session.requestType === 'screen'
+          ? 'Ainda sem sequência live. Confirme se o Android concedeu captura de ecrã em MediaProjection.'
+          : 'Sem segmentos live de áudio.';
+      }
+      enqueueLivePayload(live, session);
+    }
+
     async function loadSupportState() {
       const activeRes = await apiFetch('/api/support-sessions/device/' + encodeURIComponent(deviceId) + '/active', { method:'GET' });
       const listRes = await apiFetch('/api/support-sessions/device/' + encodeURIComponent(deviceId) + '/list', { method:'GET' });
@@ -124,12 +349,19 @@
 
       if (activeRes.ok && activeRes.session) {
         const s = activeRes.session;
-        activeEl.textContent = `Sessão ativa: ${s.requestType}.`;
+        activeEl.textContent = `Sessão ativa: ${s.requestType} (${s.stream?.mode || 'live'}).`;
         stopBtn.disabled = false;
         stopBtn.onclick = () => stopSupportSession(s.sessionId);
+        await loadLiveState(s);
+        if (liveState.activeSessionId !== s.sessionId) {
+          stopLivePolling();
+          liveState.activeSessionId = s.sessionId;
+          liveState.pollHandle = setInterval(() => loadSupportState(), s.stream?.pollIntervalMs || 5000);
+        }
       } else {
         activeEl.textContent = 'Nenhuma sessão ativa.';
         stopBtn.disabled = true;
+        resetLiveView();
       }
 
       const sessions = listRes.ok ? listRes.sessions : [];
@@ -155,6 +387,7 @@
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
       await loadDevice();
+      await ensureLiveSocket();
       await loadSupportState();
       const items = await loadHistory();
       if (items && items.length>0) {
@@ -163,19 +396,7 @@
         if (loc && loc.lat && loc.lon) initMap(loc.lat, loc.lon);
         else initMap(0,0);
       } else initMap(0,0);
-
-      const socket = io();
-      socket.emit('join_device_room', deviceId);
-      socket.on('telemetry', (data) => {
-        if (data && data.payload && data.payload.location) {
-          const loc = data.payload.location;
-          initMap(loc.lat, loc.lon);
-          const ul = document.getElementById('historyList');
-          const li = document.createElement('li');
-          li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small class="small">${new Date(data.ts).toLocaleString()}</small><div>${JSON.stringify(data.payload)}</div></div>`;
-          ul.insertBefore(li, ul.firstChild);
-        }
-      });
+      window.addEventListener('beforeunload', disconnectLiveSocket);
     })();
   </script>
 </body>

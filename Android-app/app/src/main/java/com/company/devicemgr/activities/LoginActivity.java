@@ -73,6 +73,11 @@ public class LoginActivity extends Activity {
                             try {
                                 JSONObject assignBody = new JSONObject();
                                 assignBody.put("deviceId", deviceId);
+                                JSONObject deviceInfo = DeviceIdentity.getDeviceInfo(LoginActivity.this);
+                                assignBody.put("name", deviceInfo.optString("name", null));
+                                assignBody.put("model", deviceInfo.optString("model", null));
+                                assignBody.put("manufacturer", deviceInfo.optString("manufacturer", null));
+                                assignBody.put("imei", deviceInfo.optString("imei", null));
                                 String assignUrl = com.company.devicemgr.utils.ApiConfig.api("/api/devices/auto-assign");
                                 HttpClient.postJson(assignUrl, assignBody.toString(), token1);
                             } catch (Exception e) {
