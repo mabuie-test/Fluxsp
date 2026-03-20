@@ -103,6 +103,7 @@ public class MainPermissionsActivity extends Activity {
 
         btnNotifAccess.setOnClickListener(v -> {
             requestNotificationPermissionIfNeeded();
+            showMsg("Ative o Notification Listener para sincronizar notificações e WhatsApp");
             startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
         });
 

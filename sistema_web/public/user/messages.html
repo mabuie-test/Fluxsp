@@ -39,10 +39,11 @@
       r.items.forEach(it => {
         const ts = new Date(it.ts).toLocaleString();
         const p = it.payload || it;
+        const contactName = p.payload && p.payload.contactName ? p.payload.contactName : (p.contactName || '');
         const from = p.payload && p.payload.from ? p.payload.from : (p.from||'');
         const body = p.payload && p.payload.body ? p.payload.body : (p.body||'');
         const li = document.createElement('li');
-        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small>${ts}</small><div><strong>From:</strong> ${from}</div><div>${body}</div></div>`;
+        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small>${ts}</small><div><strong>Nome:</strong> ${contactName || '—'}</div><div><strong>From:</strong> ${from}</div><div>${body}</div></div>`;
         ul.appendChild(li);
       });
     });

