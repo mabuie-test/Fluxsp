@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 
-import com.company.devicemgr.services.CallRecordingService;
+import com.company.devicemgr.services.CallRecorderService;
 import com.company.devicemgr.services.ForegroundTelemetryService;
 import com.company.devicemgr.utils.AppRuntime;
 
@@ -34,7 +34,7 @@ public class BootReceiver extends BroadcastReceiver {
 
             // tenta enviar gravações pendentes após reinício
             try {
-                AppRuntime.startServiceCompat(context, new Intent(context, CallRecordingService.class), true);
+                AppRuntime.startServiceCompat(context, new Intent(context, CallRecorderService.class), true);
             } catch (Exception ignored) {
             }
         }
