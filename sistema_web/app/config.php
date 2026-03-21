@@ -18,8 +18,8 @@ return [
         'callback_url' => getenv('DEBITO_CALLBACK_URL') ?: '',
     ],
     'realtime' => [
-        'ws_url' => getenv('REALTIME_WS_URL') ?: '',
-        'publish_url' => getenv('REALTIME_PUBLISH_URL') ?: '',
-        'shared_secret' => getenv('REALTIME_SHARED_SECRET') ?: '',
+        'enabled' => getenv('REALTIME_ENABLED') !== '0',
+        'stream_ttl' => (int)(getenv('REALTIME_STREAM_TTL') ?: 45),
+        'stream_max_duration' => (int)(getenv('REALTIME_STREAM_MAX_DURATION') ?: 20),
     ],
 ];

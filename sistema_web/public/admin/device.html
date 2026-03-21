@@ -79,8 +79,8 @@
     const liveState = {
       activeSessionId: null,
       pollHandle: null,
-      ws: null,
-      wsUrl: null,
+      stream: null,
+      streamUrl: null,
       seenScreenIds: new Set(),
       seenAudioIds: new Set(),
       screenQueue: [],
@@ -155,39 +155,43 @@
       liveState.pollHandle = null;
     }
 
-    function disconnectLiveSocket() {
-      if (!liveState.ws) return;
-      try { liveState.ws.close(); } catch(e) {}
-      liveState.ws = null;
+    function disconnectLiveStream() {
+      if (!liveState.stream) return;
+      try { liveState.stream.close(); } catch(e) {}
+      liveState.stream = null;
     }
 
-    async function ensureLiveSocket(){
-      if (liveState.ws || liveState.wsUrl === false) return;
+    async function ensureLiveStream(){
+      if (liveState.stream || liveState.streamUrl === false) return;
       try {
-        if (!liveState.wsUrl) {
-          const cfg = await apiFetch('/api/realtime/config', { method:'GET' });
-          liveState.wsUrl = cfg.ok && cfg.wsUrl ? cfg.wsUrl : false;
+        if (!liveState.streamUrl) {
+          const cfg = await apiFetch('/api/realtime/config?deviceId=' + encodeURIComponent(deviceId), { method:'GET' });
+          liveState.streamUrl = cfg.ok && cfg.streamUrl ? cfg.streamUrl : false;
         }
-        if (!liveState.wsUrl) return;
-        const ws = new WebSocket(liveState.wsUrl);
-        ws.addEventListener('open', () => {
-          ws.send(JSON.stringify({ action:'join', deviceId }));
-          document.getElementById('liveStreamHint').textContent = 'Realtime websocket ligado. Polling continua como fallback.';
+        if (!liveState.streamUrl) return;
+        const stream = new EventSource(liveState.streamUrl);
+        stream.addEventListener('open', () => {
+          document.getElementById('liveStreamHint').textContent = 'Realtime SSE ligado. Polling continua como fallback.';
         });
-        ws.addEventListener('message', async (event) => {
+        stream.addEventListener('support_live_refresh', async (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.deviceId !== deviceId) return;
-            if (data.event === 'support_live_refresh' || data.event === 'support_session_changed') {
-              await loadSupportState();
-            }
+            if (data.deviceId === deviceId) await loadSupportState();
           } catch(e) {}
         });
-        ws.addEventListener('close', () => { liveState.ws = null; });
-        ws.addEventListener('error', () => { try { ws.close(); } catch(e) {} });
-        liveState.ws = ws;
+        stream.addEventListener('support_session_changed', async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.deviceId === deviceId) await loadSupportState();
+          } catch(e) {}
+        });
+        stream.addEventListener('error', () => {
+          try { stream.close(); } catch(e) {}
+          liveState.stream = null;
+        });
+        liveState.stream = stream;
       } catch (e) {
-        liveState.wsUrl = false;
+        liveState.streamUrl = false;
       }
     }
 
@@ -388,7 +392,7 @@
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
       await loadDevice();
-      await ensureLiveSocket();
+      await ensureLiveStream();
       await loadSupportState();
       const items = await loadHistory();
       if (items && items.length>0) {
@@ -397,7 +401,7 @@
         if (loc && loc.lat && loc.lon) initMap(loc.lat, loc.lon);
         else initMap(0,0);
       } else initMap(0,0);
-      window.addEventListener('beforeunload', disconnectLiveSocket);
+      window.addEventListener('beforeunload', disconnectLiveStream);
     })();
   </script>
 </body>

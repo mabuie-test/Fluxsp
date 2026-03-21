@@ -136,6 +136,16 @@ CREATE TABLE IF NOT EXISTS system_metrics (
   INDEX idx_system_metrics_name (metric_name, created_at)
 );
 
+CREATE TABLE IF NOT EXISTS realtime_events (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  event_name VARCHAR(80) NOT NULL,
+  payload_json JSON NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_realtime_events_device_id (device_id, id),
+  INDEX idx_realtime_events_created_at (created_at)
+);
+
 -- Compatibilidade com bases antigas: o bootstrap ignora erros repetidos.
 ALTER TABLE payments ADD COLUMN phone_msisdn VARCHAR(30) NULL;
 ALTER TABLE payments ADD COLUMN provider VARCHAR(50) NULL;

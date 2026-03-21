@@ -16,6 +16,11 @@ function get_json_body(): array {
     return is_array($decoded) ? $decoded : [];
 }
 
+function starts_with(string $haystack, string $needle): bool {
+    if ($needle === '') return true;
+    return substr($haystack, 0, strlen($needle)) === $needle;
+}
+
 function db(): PDO {
     static $pdo = null;
     global $config;
@@ -88,7 +93,7 @@ function jwt_verify(string $jwt): ?array {
 
 function auth_user(bool $required = true): ?array {
     $auth = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-    if (str_starts_with($auth, 'Bearer ')) {
+    if (starts_with($auth, 'Bearer ')) {
         $token = substr($auth, 7);
         $payload = jwt_verify($token);
         if ($payload) return $payload;
@@ -137,6 +142,28 @@ function verify_signed_media_token(string $token, string $fileId, bool $download
     return $payload;
 }
 
+function signed_realtime_token(array $user, string $deviceId, int $ttlSeconds = 45): string {
+    $cfg = realtime_config();
+    $ttl = max(15, (int)($cfg['stream_ttl'] ?? $ttlSeconds));
+    $payload = [
+        'id' => (string)($user['id'] ?? ''),
+        'role' => $user['role'] ?? 'user',
+        'email' => $user['email'] ?? null,
+        'deviceId' => $deviceId,
+        'scope' => 'realtime_stream',
+        'exp' => time() + $ttl,
+    ];
+    return jwt_sign($payload);
+}
+
+function verify_signed_realtime_token(string $token, string $deviceId): ?array {
+    $payload = jwt_verify($token);
+    if (!$payload) return null;
+    if (($payload['scope'] ?? null) !== 'realtime_stream') return null;
+    if (($payload['deviceId'] ?? null) !== $deviceId) return null;
+    return $payload;
+}
+
 function record_metric(?string $deviceId, string $metricType, string $metricName, ?string $status = null, $valueMs = null, $valueNum = null, ?array $context = null): void {
     try {
         $st = db()->prepare('INSERT INTO system_metrics(device_id, metric_type, metric_name, status, value_ms, value_num, context_json) VALUES(?,?,?,?,?,?,?)');
@@ -167,35 +194,25 @@ function realtime_config(): array {
 
 function publish_realtime_event(string $deviceId, string $event, array $payload = []): void {
     $cfg = realtime_config();
-    $publishUrl = trim((string)($cfg['publish_url'] ?? ''));
-    if ($publishUrl === '') return;
+    if (empty($cfg['enabled'])) return;
 
-    $body = json_encode([
-        'deviceId' => $deviceId,
-        'event' => $event,
-        'payload' => $payload,
-    ]);
-    if ($body === false) return;
+    try {
+        $body = json_encode([
+            'deviceId' => $deviceId,
+            'event' => $event,
+            'payload' => $payload,
+        ]);
+        if ($body === false) return;
 
-    $headers = [
-        'Content-Type: application/json',
-        'Content-Length: ' . strlen($body),
-    ];
-    if (!empty($cfg['shared_secret'])) {
-        $headers[] = 'X-Realtime-Secret: ' . $cfg['shared_secret'];
+        $ins = db()->prepare('INSERT INTO realtime_events(device_id, event_name, payload_json) VALUES(?,?,?)');
+        $ins->execute([$deviceId, $event, $body]);
+
+        if (random_int(1, 40) === 1) {
+            db()->exec('DELETE FROM realtime_events WHERE created_at < (NOW() - INTERVAL 1 DAY)');
+        }
+    } catch (Throwable $e) {
+        // realtime não deve quebrar o fluxo principal
     }
-
-    $ch = curl_init($publishUrl);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_POSTFIELDS => $body,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT_MS => 800,
-        CURLOPT_CONNECTTIMEOUT_MS => 300,
-    ]);
-    curl_exec($ch);
-    curl_close($ch);
 }
 
 function debito_is_configured(): bool {

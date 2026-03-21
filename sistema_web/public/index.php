@@ -191,11 +191,11 @@ function build_media_urls(array $user, string $fileId): array {
 function format_media_row(array $row, array $user): array {
     global $config;
     $contentType = (string)($row['contentType'] ?? $row['content_type'] ?? 'application/octet-stream');
-    $kind = str_starts_with($contentType, 'image/')
+    $kind = starts_with($contentType, 'image/')
         ? 'image'
-        : (str_starts_with($contentType, 'audio/')
+        : (starts_with($contentType, 'audio/')
             ? 'audio'
-            : (str_starts_with($contentType, 'video/') ? 'video' : 'other'));
+            : (starts_with($contentType, 'video/') ? 'video' : 'other'));
     $storagePath = (string)($row['storagePath'] ?? $row['storage_path'] ?? '');
     $path = rtrim($config['media_dir'], '/') . '/' . $storagePath;
     $meta = find_media_metadata((string)($row['fileId'] ?? $row['file_id'] ?? ''));
@@ -305,7 +305,9 @@ function recent_call_recordings_for_device(string $deviceId, array $user): array
         ORDER BY m.upload_date DESC
         LIMIT 120");
     $st->execute([$deviceId, $deviceId]);
-    return array_map(fn ($row) => format_media_row($row, $user), $st->fetchAll());
+    return array_map(function ($row) use ($user) {
+        return format_media_row($row, $user);
+    }, $st->fetchAll());
 }
 
 function ensure_device_media_link(string $deviceId, string $fileId): void {
@@ -608,12 +610,12 @@ function device_observability_summary(string $deviceId): array {
     return $summary;
 }
 
-if (!str_starts_with($uri, '/api')) {
+if (!starts_with($uri, '/api')) {
     $target = $uri === '/' ? '/index.html' : $uri;
     $file = realpath(__DIR__ . $target);
     $base = realpath(__DIR__);
 
-    if ($file && $base && str_starts_with($file, $base) && is_file($file)) {
+    if ($file && $base && starts_with($file, $base) && is_file($file)) {
         $ext = pathinfo($file, PATHINFO_EXTENSION);
         $types = [
             'html' => 'text/html; charset=utf-8',
@@ -643,12 +645,69 @@ try {
     }
 
     if ($method === 'GET' && $uri === '/api/realtime/config') {
-        auth_user();
+        $u = auth_user();
+        $deviceId = trim((string)($_GET['deviceId'] ?? ''));
+        if ($deviceId === '') json_response(['ok' => false, 'error' => 'missing_device'], 400);
+        $d = find_device($deviceId);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
         $cfg = realtime_config();
         json_response([
             'ok' => true,
-            'wsUrl' => !empty($cfg['ws_url']) ? $cfg['ws_url'] : null,
+            'mode' => !empty($cfg['enabled']) ? 'sse' : 'polling',
+            'streamUrl' => !empty($cfg['enabled'])
+                ? ('/api/realtime/stream?deviceId=' . rawurlencode($deviceId) . '&stream_token=' . rawurlencode(signed_realtime_token($u, $deviceId, (int)($cfg['stream_ttl'] ?? 45))))
+                : null,
         ]);
+    }
+
+    if ($method === 'GET' && $uri === '/api/realtime/stream') {
+        $deviceId = trim((string)($_GET['deviceId'] ?? ''));
+        $streamToken = (string)($_GET['stream_token'] ?? '');
+        if ($deviceId === '' || $streamToken === '') json_response(['ok' => false, 'error' => 'invalid_token'], 401);
+        $u = verify_signed_realtime_token($streamToken, $deviceId);
+        if (!$u) json_response(['ok' => false, 'error' => 'invalid_token'], 401);
+        $d = find_device($deviceId);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+
+        @ini_set('output_buffering', 'off');
+        @ini_set('zlib.output_compression', '0');
+        @ini_set('implicit_flush', '1');
+        while (ob_get_level() > 0) { @ob_end_flush(); }
+        ignore_user_abort(true);
+        set_time_limit(0);
+
+        header('Content-Type: text/event-stream; charset=utf-8');
+        header('Cache-Control: no-cache, no-transform');
+        header('Connection: keep-alive');
+        header('X-Accel-Buffering: no');
+
+        $lastEventId = isset($_SERVER['HTTP_LAST_EVENT_ID']) ? (int)$_SERVER['HTTP_LAST_EVENT_ID'] : (int)($_GET['lastEventId'] ?? 0);
+        $startedAt = time();
+        $cfg = realtime_config();
+        $maxDuration = max(10, (int)($cfg['stream_max_duration'] ?? 20));
+
+        do {
+            $st = db()->prepare('SELECT id, event_name, payload_json FROM realtime_events WHERE device_id = ? AND id > ? ORDER BY id ASC LIMIT 50');
+            $st->execute([$deviceId, $lastEventId]);
+            $rows = $st->fetchAll();
+            foreach ($rows as $row) {
+                $lastEventId = (int)$row['id'];
+                echo 'id: ' . $lastEventId . "\n";
+                echo 'event: ' . ($row['event_name'] ?? 'message') . "\n";
+                echo 'data: ' . ($row['payload_json'] ?? '{}') . "\n\n";
+            }
+            if (!$rows) {
+                echo "event: ping\n";
+                echo 'data: ' . json_encode(['ok' => true, 'ts' => time()]) . "\n\n";
+            }
+            @ob_flush();
+            flush();
+            if (connection_aborted()) exit;
+            if ((time() - $startedAt) >= $maxDuration) exit;
+            sleep(1);
+        } while (true);
     }
 
     // Auth
@@ -957,7 +1016,7 @@ try {
         $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
 
         $session = find_support_session($sessionId);
-        publish_realtime_event($deviceId, 'support_session_changed', [
+            publish_realtime_event($deviceId, 'support_session_changed', [
             'sessionId' => $sessionId,
             'status' => 'approved',
             'requestType' => $requestType,
@@ -1085,6 +1144,7 @@ try {
 
         if ($eventType === 'telemetry') {
             persist_location_event($deviceId, $eventPayload);
+            publish_realtime_event($deviceId, 'telemetry', $eventPayload);
         } elseif ($eventType === 'sms') {
             persist_message_event($deviceId, $eventPayload, 'sms');
         } elseif ($eventType === 'whatsapp') {
@@ -1283,7 +1343,9 @@ try {
         $st->bindValue(4, $offset, PDO::PARAM_INT);
         $st->execute();
         $rows = $st->fetchAll();
-        $files = array_map(fn ($row) => format_media_row($row, $u), $rows);
+        $files = array_map(function ($row) use ($u) {
+            return format_media_row($row, $u);
+        }, $rows);
 
         json_response([
             'ok' => true,
@@ -1473,7 +1535,7 @@ try {
     if ($e->getMessage() === 'db_unavailable') json_response(['ok' => false, 'error' => 'db_unavailable'], 503);
     if ($e->getMessage() === 'debito_not_configured') json_response(['ok' => false, 'error' => 'debito_not_configured'], 503);
     if ($e->getMessage() === 'debito_status_refresh_failed') json_response(['ok' => false, 'error' => 'debito_status_refresh_failed'], 502);
-    if (str_starts_with($e->getMessage(), 'debito_request_failed:')) {
+    if (starts_with($e->getMessage(), 'debito_request_failed:')) {
         json_response(['ok' => false, 'error' => 'debito_request_failed', 'details' => substr($e->getMessage(), strlen('debito_request_failed:'))], 502);
     }
     json_response(['ok' => false, 'error' => 'server_error'], 500);

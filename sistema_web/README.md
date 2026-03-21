@@ -12,9 +12,9 @@ Defina variáveis de ambiente:
 - `ADMIN_REGISTRATION_SECRET` (opcional)
 - `APP_BASE_URL` (opcional, usado no link de recuperação)
 - Realtime:
-  - `REALTIME_WS_URL` (ex.: `ws://127.0.0.1:8091`)
-  - `REALTIME_PUBLISH_URL` (ex.: `http://127.0.0.1:8091/publish`)
-  - `REALTIME_SHARED_SECRET`
+  - `REALTIME_ENABLED` (`1` por omissão)
+  - `REALTIME_STREAM_TTL` (segundos do token SSE; ex.: `45`)
+  - `REALTIME_STREAM_MAX_DURATION` (duração máxima de cada stream SSE; ex.: `20`)
 - Débito / M-Pesa:
   - `DEBITO_BASE_URL`
   - `DEBITO_API_TOKEN`
@@ -29,17 +29,13 @@ Defina variáveis de ambiente:
 php -S 0.0.0.0:3000 -t public
 ```
 
-## Hub websocket realtime
+## Realtime interno (compatível com hospedagem compartilhada)
 
-No diretório raiz do repositório:
+O realtime agora roda dentro do próprio `sistema_web` via PHP + Server-Sent Events (SSE) e tabela `realtime_events`, sem depender de Node.js nem websocket externo.
 
-```bash
-REALTIME_PORT=8091 \
-REALTIME_SHARED_SECRET=change-me \
-node realtime/ws_hub.js
-```
-
-O frontend usa `REALTIME_WS_URL` e o backend publica eventos para `REALTIME_PUBLISH_URL`.
+- `GET /api/realtime/config?deviceId=...` devolve um `streamUrl` curto e autenticado.
+- `GET /api/realtime/stream?...` mantém a stream SSE por um período curto e o browser reconecta automaticamente.
+- Os painéis web continuam com polling como fallback.
 
 ## Dependência de email (PHPMailer)
 ```bash
@@ -64,6 +60,7 @@ composer require phpmailer/phpmailer
 - Validação de acesso por owner/admin para endpoints sensíveis de device, telemetry e media.
 - Operação de processamento de pagamentos com transação no banco.
 - O schema foi consolidado para permitir instalações limpas sem falhar em `ALTER TABLE` duplicados.
+- O realtime foi movido para dentro do próprio backend PHP para funcionar em ambientes com apenas PHP 7+ em hospedagem compartilhada.
 
 ## Associação automática do dispositivo
 - A app Android faz associação automática do `deviceId` ao utilizador no login via `POST /api/devices/auto-assign`.
