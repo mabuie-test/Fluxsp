@@ -46,7 +46,6 @@ public class MainPermissionsActivity extends Activity {
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
     private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
-    private static final String POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS";
 
     @Override
     protected void onCreate(Bundle s) {
@@ -114,7 +113,6 @@ public class MainPermissionsActivity extends Activity {
         }));
 
         btnNotifAccess.setOnClickListener(v -> {
-            requestNotificationPermissionIfNeeded();
             showMsg("Ative o Notification Listener para sincronizar notificações e WhatsApp");
             startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
         });
@@ -189,11 +187,6 @@ public class MainPermissionsActivity extends Activity {
         return new String[]{Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE};
     }
 
-    private void requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
-            requestPermissionsIfNeeded(new String[]{POST_NOTIFICATIONS_PERMISSION});
-        }
-    }
 
     private void requestScreenCaptureGrant() {
         MediaProjectionManager manager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
@@ -215,7 +208,6 @@ public class MainPermissionsActivity extends Activity {
             return;
         }
 
-        requestNotificationPermissionIfNeeded();
         AppRuntime.ensureTelemetryStarted(this);
         showMsg("Serviço iniciado");
         updateStatusText();
