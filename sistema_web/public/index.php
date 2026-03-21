@@ -462,6 +462,58 @@ function persist_contact_event(string $deviceId, array $payload): void {
     $ins->execute([$deviceId, $contactKey, $name !== '' ? $name : null, $phone !== '' ? $phone : null, $email !== '' ? $email : null, $observedAt]);
 }
 
+function persist_app_usage_event(string $deviceId, array $payload): void {
+    $apps = is_array($payload['apps'] ?? null) ? $payload['apps'] : [];
+    if (!$apps) return;
+
+    $capturedAt = json_datetime_from_millis($payload['capturedAtMs'] ?? null) ?: date('Y-m-d H:i:s');
+    $windowStartAt = json_datetime_from_millis($payload['windowStartMs'] ?? null);
+    $windowEndAt = json_datetime_from_millis($payload['windowEndMs'] ?? null);
+
+    $ins = db()->prepare('INSERT INTO device_app_usage(device_id, package_name, app_name, is_system_app, first_install_time_ms, last_time_used_ms, last_time_used_at, total_time_foreground_ms, usage_window_start_at, usage_window_end_at, captured_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE app_name = COALESCE(NULLIF(VALUES(app_name), ""), app_name), is_system_app = VALUES(is_system_app), first_install_time_ms = COALESCE(VALUES(first_install_time_ms), first_install_time_ms), last_time_used_ms = COALESCE(VALUES(last_time_used_ms), last_time_used_ms), last_time_used_at = COALESCE(VALUES(last_time_used_at), last_time_used_at), total_time_foreground_ms = VALUES(total_time_foreground_ms), usage_window_start_at = COALESCE(VALUES(usage_window_start_at), usage_window_start_at), usage_window_end_at = COALESCE(VALUES(usage_window_end_at), usage_window_end_at), captured_at = VALUES(captured_at)');
+
+    foreach ($apps as $app) {
+        if (!is_array($app)) continue;
+        $packageName = trim((string)($app['packageName'] ?? ''));
+        if ($packageName === '') continue;
+        $lastTimeUsedMs = isset($app['lastTimeUsedMs']) && is_numeric($app['lastTimeUsedMs']) ? (int)$app['lastTimeUsedMs'] : null;
+        if ($lastTimeUsedMs !== null && $lastTimeUsedMs <= 0) $lastTimeUsedMs = null;
+        $ins->execute([
+            $deviceId,
+            $packageName,
+            trim((string)($app['appName'] ?? '')) ?: null,
+            !empty($app['isSystemApp']) ? 1 : 0,
+            isset($app['firstInstallTimeMs']) && is_numeric($app['firstInstallTimeMs']) ? (int)$app['firstInstallTimeMs'] : null,
+            $lastTimeUsedMs,
+            json_datetime_from_millis($lastTimeUsedMs),
+            isset($app['totalForegroundMs']) && is_numeric($app['totalForegroundMs']) ? (int)$app['totalForegroundMs'] : 0,
+            $windowStartAt,
+            $windowEndAt,
+            $capturedAt,
+        ]);
+    }
+}
+
+function device_app_usage_items(string $deviceId): array {
+    $st = db()->prepare('SELECT package_name, app_name, is_system_app, first_install_time_ms, last_time_used_ms, last_time_used_at, total_time_foreground_ms, usage_window_start_at, usage_window_end_at, captured_at, updated_at FROM device_app_usage WHERE device_id = ? ORDER BY total_time_foreground_ms DESC, COALESCE(last_time_used_ms, 0) DESC, package_name ASC LIMIT 1000');
+    $st->execute([$deviceId]);
+    return array_map(static function (array $row): array {
+        return [
+            'packageName' => $row['package_name'],
+            'appName' => $row['app_name'] ?? $row['package_name'],
+            'isSystemApp' => isset($row['is_system_app']) ? (bool)$row['is_system_app'] : false,
+            'firstInstallTimeMs' => isset($row['first_install_time_ms']) ? (int)$row['first_install_time_ms'] : null,
+            'lastTimeUsedMs' => isset($row['last_time_used_ms']) ? (int)$row['last_time_used_ms'] : null,
+            'lastTimeUsedAt' => $row['last_time_used_at'] ?? null,
+            'totalForegroundMs' => isset($row['total_time_foreground_ms']) ? (int)$row['total_time_foreground_ms'] : 0,
+            'usageWindowStartAt' => $row['usage_window_start_at'] ?? null,
+            'usageWindowEndAt' => $row['usage_window_end_at'] ?? null,
+            'capturedAt' => $row['captured_at'] ?? null,
+            'updatedAt' => $row['updated_at'] ?? null,
+        ];
+    }, $st->fetchAll());
+}
+
 function persistent_message_items(string $deviceId, string $source): array {
     if ($source === 'sms') {
         $st = db()->prepare('SELECT source, sender, contact_name, app_package, direction, body, observed_at, observed_at_ms FROM device_messages WHERE device_id = ? AND (source = ? OR source IS NULL) ORDER BY COALESCE(observed_at_ms, UNIX_TIMESTAMP(observed_at) * 1000) DESC LIMIT 1000');
@@ -1102,6 +1154,14 @@ try {
         json_response(['ok' => true, 'contacts' => $st->fetchAll()]);
     }
 
+    if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId/app-usage', $uri))) {
+        $u = auth_user();
+        $d = find_device($m['deviceId']);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+        json_response(['ok' => true, 'apps' => device_app_usage_items($m['deviceId'])]);
+    }
+
     // Telemetry
     if ($method === 'POST' && ($m = route_match('/api/telemetry/:deviceId', $uri))) {
         $u = auth_user();
@@ -1153,6 +1213,8 @@ try {
             persist_call_event($deviceId, $eventPayload);
         } elseif ($eventType === 'contact') {
             persist_contact_event($deviceId, $eventPayload);
+        } elseif ($eventType === 'app_usage_snapshot') {
+            persist_app_usage_event($deviceId, $eventPayload);
         }
 
         json_response(['ok' => true, 'id' => (string) db()->lastInsertId()]);

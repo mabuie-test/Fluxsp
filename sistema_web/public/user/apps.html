@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Apps instaladas e uso</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div class="container">
+    <header style="display:flex;justify-content:space-between">
+      <h1>Apps instaladas e uso</h1>
+      <div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div>
+    </header>
+
+    <div class="card">
+      <label>Dispositivo:
+        <select id="deviceSelect"><option value="">Selecione um dispositivo</option></select>
+      </label>
+      <input id="deviceId" placeholder="DeviceId" />
+      <button id="btnLoad">Carregar</button>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table id="appsTable">
+          <thead>
+            <tr>
+              <th>App</th>
+              <th>Package</th>
+              <th>Tipo</th>
+              <th>Último uso</th>
+              <th>Tempo em foreground</th>
+              <th>Instalada em</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    if (!localStorage.getItem('auth_token')) location.href = '/';
+    document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('deviceId')) document.getElementById('deviceId').value = params.get('deviceId');
+
+    function formatDuration(ms){
+      const totalSeconds = Math.max(0, Math.round((ms || 0) / 1000));
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      if (hours > 0) return `${hours}h ${minutes}m`;
+      if (minutes > 0) return `${minutes}m ${seconds}s`;
+      return `${seconds}s`;
+    }
+
+    async function loadDeviceOptions(){
+      const res = await apiFetch('/api/devices/my', { method:'GET' });
+      const sel = document.getElementById('deviceSelect');
+      if (!res.ok) return;
+      sel.innerHTML = '<option value="">Selecione um dispositivo</option>';
+      (res.devices || []).forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = (d.model || d.name || d.deviceId) + (d.model || d.name ? ` (${d.deviceId})` : '');
+        if (d.deviceId === document.getElementById('deviceId').value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => {
+        document.getElementById('deviceId').value = sel.value;
+      });
+    }
+
+    document.getElementById('btnLoad').addEventListener('click', async () => {
+      const deviceId = document.getElementById('deviceId').value.trim();
+      if (!deviceId) return alert('DeviceId required');
+      const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId) + '/app-usage', { method:'GET' });
+      const tbody = document.querySelector('#appsTable tbody');
+      tbody.innerHTML = '';
+      if (!r.ok) {
+        tbody.innerHTML = '<tr><td colspan="6">Erro: ' + JSON.stringify(r) + '</td></tr>';
+        return;
+      }
+
+      const apps = r.apps || [];
+      if (!apps.length) {
+        tbody.innerHTML = '<tr><td colspan="6">Sem dados de uso disponíveis para este dispositivo.</td></tr>';
+        return;
+      }
+
+      apps.forEach(app => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${app.appName || '—'}</td>
+          <td>${app.packageName || '—'}</td>
+          <td>${app.isSystemApp ? 'Sistema' : 'Utilizador'}</td>
+          <td>${app.lastTimeUsedAt ? new Date(app.lastTimeUsedAt).toLocaleString() : 'Nunca/sem dados'}</td>
+          <td>${formatDuration(app.totalForegroundMs)}</td>
+          <td>${app.firstInstallTimeMs ? new Date(app.firstInstallTimeMs).toLocaleString() : '—'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    });
+
+    loadDeviceOptions().then(() => {
+      if (document.getElementById('deviceId').value) document.getElementById('btnLoad').click();
+    });
+  </script>
+</body>
+</html>
