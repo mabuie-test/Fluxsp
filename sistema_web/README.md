@@ -29,13 +29,21 @@ Defina variáveis de ambiente:
 php -S 0.0.0.0:3000 -t public
 ```
 
-## Realtime interno (compatível com hospedagem compartilhada)
+## Realtime interno (compatível com hospedagem compartilhada PHP 7+)
 
 O realtime agora roda dentro do próprio `sistema_web` via PHP + Server-Sent Events (SSE) e tabela `realtime_events`, sem depender de Node.js nem websocket externo.
 
 - `GET /api/realtime/config?deviceId=...` devolve um `streamUrl` curto e autenticado.
 - `GET /api/realtime/stream?...` mantém a stream SSE por um período curto e o browser reconecta automaticamente.
 - Os painéis web continuam com polling como fallback.
+- Não é necessário manter um serviço externo para realtime; toda a implementação suportada fica dentro de `sistema_web`.
+
+## Deploy em host compartilhado
+
+- Faça o deploy da pasta `sistema_web/`.
+- Configure o document root para `sistema_web/public/`.
+- Preserve `public/.htaccess` para o roteamento das rotas amigáveis e da API.
+- Garanta PHP 7+ com extensões comuns de PDO/MySQL e permissão de escrita em `storage/media/`.
 
 ## Dependência de email (PHPMailer)
 ```bash
