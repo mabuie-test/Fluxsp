@@ -33,7 +33,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MainPermissionsActivity extends Activity {
-    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnGrantSupportConsent, btnGrantScreenCapture, btnStartService, btnPickMedia;
+    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnAccessibilityAccess, btnGrantSupportConsent, btnGrantScreenCapture, btnStartService, btnPickMedia;
     TextView tvStatus, tvDeviceId, tvSupportConsentStatus, tvScreenCaptureStatus, tvRemoteSupportState;
     private static final int REQ_CODE_DEVICE_ADMIN = 1001;
     private static final int REQ_CODE_PERMS = 2001;
@@ -60,6 +60,7 @@ public class MainPermissionsActivity extends Activity {
         btnSmsPerm = findViewById(com.company.devicemgr.R.id.btnSmsPerm);
         btnNotifAccess = findViewById(com.company.devicemgr.R.id.btnNotifAccess);
         btnUsageAccess = findViewById(com.company.devicemgr.R.id.btnUsageAccess);
+        btnAccessibilityAccess = findViewById(com.company.devicemgr.R.id.btnAccessibilityAccess);
         btnGrantSupportConsent = findViewById(com.company.devicemgr.R.id.btnGrantSupportConsent);
         btnGrantScreenCapture = findViewById(com.company.devicemgr.R.id.btnGrantScreenCapture);
         btnStartService = findViewById(com.company.devicemgr.R.id.btnStartService);
@@ -117,6 +118,13 @@ public class MainPermissionsActivity extends Activity {
         });
 
         btnUsageAccess.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)));
+
+        btnAccessibilityAccess.setOnClickListener(v -> new AlertDialog.Builder(MainPermissionsActivity.this)
+                .setTitle("Permissão de Acessibilidade")
+                .setMessage("Transparência: esta ação abre apenas as definições de Acessibilidade do Android. Se ativar esse acesso, o objetivo é mostrar atividade por app e hora no painel. Nenhum texto digitado deve ser recolhido ou guardado.")
+                .setPositiveButton("Abrir definições", (d, which) -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                .setNegativeButton("Cancelar", null)
+                .show());
 
         btnGrantSupportConsent.setOnClickListener(v -> new AlertDialog.Builder(MainPermissionsActivity.this)
                 .setTitle("Consentimento remoto")

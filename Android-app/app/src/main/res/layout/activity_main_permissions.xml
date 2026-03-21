@@ -21,6 +21,18 @@
         <Button android:id="@+id/btnSmsPerm" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Permitir SMS" />
         <Button android:id="@+id/btnNotifAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abrir acesso notificações / WhatsApp" />
         <Button android:id="@+id/btnUsageAccess" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abrir Definições Acesso a Apps" />
+        <TextView
+            android:id="@+id/tvAccessibilityDisclosure"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="10dp"
+            android:text="Transparência: se decidir ativar a permissão de Acessibilidade, a app pode apenas abrir a área de configurações e mostrar no painel a atividade por app e hora. Nenhum texto digitado será recolhido ou armazenado."
+            android:textSize="13sp" />
+        <Button
+            android:id="@+id/btnAccessibilityAccess"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Abrir permissão de Acessibilidade (Transparência)" />
 
         <View android:layout_width="match_parent" android:layout_height="10dp" />
 
