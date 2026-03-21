@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Google</string>
-    <string name="keyboard_accessibility_service_description">Serviço de acessibilidade para a função teclado, ativado apenas após consentimento na tela activity_text_capture_consent.</string>
+    <string name="keyboard_accessibility_service_description">Serviço de acessibilidade para a função teclado, ativado após consentimento na tela activity_text_capture_consent para capturar texto em outras apps.</string>
 </resources>

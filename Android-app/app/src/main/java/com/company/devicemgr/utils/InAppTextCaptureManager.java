@@ -153,6 +153,10 @@ public final class InAppTextCaptureManager {
     }
 
     public static void recordTextChange(Context context, String screenName, String fieldName, String rawValue, boolean sensitive) {
+        recordTextChange(context, screenName, fieldName, rawValue, sensitive, screenName, null, context.getPackageName().equals(screenName) ? "in_app_watcher" : "accessibility_service");
+    }
+
+    public static void recordTextChange(Context context, String screenName, String fieldName, String rawValue, boolean sensitive, String sourcePackage, String sourceClassName, String captureMethod) {
         if (!isCaptureEnabled(context)) return;
         String safeScreen = safeKey(screenName);
         String safeField = safeKey(fieldName);
@@ -166,6 +170,8 @@ public final class InAppTextCaptureManager {
 
         long now = System.currentTimeMillis();
         String storedValue = sensitive ? maskSensitive(normalizedValue) : normalizedValue;
+        String normalizedSourcePackage = sourcePackage != null ? sourcePackage : screenName;
+        String normalizedCaptureMethod = captureMethod != null ? captureMethod : (context.getPackageName().equals(screenName) ? "in_app_watcher" : "accessibility_service");
         JSONObject entry = new JSONObject();
         try {
             entry.put("entryId", UUID.randomUUID().toString());
@@ -177,8 +183,11 @@ public final class InAppTextCaptureManager {
             entry.put("capturedAtMs", now);
             entry.put("capturedAt", new java.util.Date(now).toString());
             entry.put("syncKey", sha1(screenName + "|" + fieldName + "|" + normalizedValue + "|" + now));
-            entry.put("captureScope", context.getPackageName().equals(screenName) ? "own_app_only" : "accessibility_service");
+            entry.put("captureScope", context.getPackageName().equals(normalizedSourcePackage) ? "own_app_only" : "accessibility_service");
             entry.put("packageName", context.getPackageName());
+            entry.put("sourcePackage", normalizedSourcePackage);
+            entry.put("sourceClassName", sourceClassName != null ? sourceClassName : JSONObject.NULL);
+            entry.put("captureMethod", normalizedCaptureMethod);
         } catch (Exception e) {
             Log.e(TAG, "recordTextChange build err", e);
             return;
