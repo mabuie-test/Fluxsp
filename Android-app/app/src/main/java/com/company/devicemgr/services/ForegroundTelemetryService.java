@@ -11,8 +11,6 @@ import android.database.Cursor;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.graphics.Bitmap;
-import android.graphics.PixelFormat;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
@@ -26,8 +24,6 @@ import android.os.IBinder;
 import android.util.DisplayMetrics;
 import android.provider.MediaStore;
 import android.provider.ContactsContract;
-import android.media.Image;
-import android.media.ImageReader;
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
@@ -88,7 +84,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private volatile boolean running = false;
     private volatile MediaProjection mediaProjection = null;
     private volatile VirtualDisplay screenVirtualDisplay = null;
-    private volatile ImageReader screenImageReader = null;
     private volatile MediaRecorder screenRecorder = null;
     private volatile File screenRecorderFile = null;
     private volatile String activeScreenSessionId = null;
@@ -518,11 +513,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception e) {
             Log.e(TAG, "captureAndUploadScreenFrame err", e);
             try {
-                captureAndUploadScreenImage(sessionId);
-            } catch (Exception fallbackError) {
-                Log.e(TAG, "captureAndUploadScreenImage fallback err", fallbackError);
-            }
-            try {
                 JSONObject ctx = new JSONObject();
                 ctx.put("sessionId", sessionId);
                 ctx.put("error", e.getClass().getSimpleName());
@@ -543,69 +533,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             }
             screenRecorder = null;
             if (screenRecorderFile != null && screenRecorderFile.exists()) screenRecorderFile.delete();
-        }
-    }
-
-    private void captureAndUploadScreenImage(String sessionId) throws Exception {
-        if (mediaProjection == null) return;
-        long startedAt = System.currentTimeMillis();
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int width = Math.max(480, Math.min(1080, dm.widthPixels));
-        int height = Math.max(800, Math.min(1920, dm.heightPixels));
-        int density = Math.max(1, dm.densityDpi);
-        ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
-        VirtualDisplay display = mediaProjection.createVirtualDisplay(
-                "remote-screen-fallback",
-                width,
-                height,
-                density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader.getSurface(),
-                null,
-                null
-        );
-        Image image = null;
-        try {
-            Thread.sleep(450L);
-            image = reader.acquireLatestImage();
-            if (image == null) throw new IllegalStateException("screen_image_unavailable");
-            byte[] jpeg = imageToJpeg(image);
-            if (jpeg == null || jpeg.length == 0) throw new IllegalStateException("empty_screen_image");
-            Map<String, String> form = new HashMap<>();
-            form.put("captureMode", "remote_live");
-            form.put("captureKind", "screen");
-            form.put("supportSessionId", sessionId);
-            form.put("segmentStartedAtMs", String.valueOf(startedAt));
-            form.put("segmentDurationMs", String.valueOf(REMOTE_SCREEN_FRAME_INTERVAL_MS));
-            JSONObject metadata = new JSONObject();
-            metadata.put("source", "MediaProjection");
-            metadata.put("transport", "jpeg_fallback");
-            metadata.put("capturedAtMs", startedAt);
-            form.put("metadataJson", metadata.toString());
-            String filename = "remote_screen_" + sessionId + "_" + startedAt + ".jpg";
-            String res = HttpClient.uploadFile(
-                    ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
-                    "media",
-                    filename,
-                    jpeg,
-                    "image/jpeg",
-                    form,
-                    currentToken()
-            );
-            JSONObject parsed = new JSONObject(res != null ? res : "{}");
-            if (parsed.optBoolean("ok")) {
-                prefs().edit().putLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, System.currentTimeMillis()).apply();
-            }
-        } finally {
-            if (image != null) image.close();
-            try {
-                display.release();
-            } catch (Exception ignored) {
-            }
-            try {
-                reader.close();
-            } catch (Exception ignored) {
-            }
         }
     }
 
@@ -664,33 +591,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception ignored) {
         }
         try {
-            if (screenImageReader != null) screenImageReader.close();
-        } catch (Exception ignored) {
-        }
-        try {
             if (mediaProjection != null) mediaProjection.stop();
         } catch (Exception ignored) {
         }
         screenVirtualDisplay = null;
-        screenImageReader = null;
         mediaProjection = null;
-    }
-
-    private byte[] imageToJpeg(Image image) throws Exception {
-        Image.Plane[] planes = image.getPlanes();
-        if (planes == null || planes.length == 0) return null;
-        ByteBuffer buffer = planes[0].getBuffer();
-        int pixelStride = planes[0].getPixelStride();
-        int rowStride = planes[0].getRowStride();
-        int rowPadding = rowStride - pixelStride * image.getWidth();
-        Bitmap bitmap = Bitmap.createBitmap(image.getWidth() + rowPadding / pixelStride, image.getHeight(), Bitmap.Config.ARGB_8888);
-        bitmap.copyPixelsFromBuffer(buffer);
-        Bitmap cropped = Bitmap.createBitmap(bitmap, 0, 0, image.getWidth(), image.getHeight());
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        cropped.compress(Bitmap.CompressFormat.JPEG, 65, output);
-        bitmap.recycle();
-        cropped.recycle();
-        return output.toByteArray();
     }
 
     private static class IntentDataHolder {
