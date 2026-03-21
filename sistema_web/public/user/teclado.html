@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Teclado</title>
+  <link rel="stylesheet" href="/css/styles.css">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+</head>
+<body>
+  <div class="container">
+    <header class="page-header">
+      <div>
+        <h1>Teclado</h1>
+        <p class="small">Mostra apenas eventos enviados pelos campos controlados pela própria app, com consentimento e sincronização com backend.</p>
+      </div>
+      <div class="action-row"><a class="btn" href="/user/dashboard.html">Back</a> <button id="logout">Logout</button></div>
+    </header>
+
+    <section class="card">
+      <div id="deviceInfo">A carregar dispositivo...</div>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <div>
+          <h3>Entradas do teclado sincronizadas</h3>
+          <p class="small">Campos sensíveis são mascarados antes de sair do dispositivo.</p>
+        </div>
+        <div class="badge" id="countBadge">0</div>
+      </div>
+      <div class="table-wrap">
+        <table id="entriesTable">
+          <thead>
+            <tr>
+              <th>Quando</th>
+              <th>Tela</th>
+              <th>Campo</th>
+              <th>Texto</th>
+              <th>Tamanho</th>
+              <th>Escopo</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const token = localStorage.getItem('auth_token');
+    if (!token) location.href = '/';
+    const params = new URLSearchParams(window.location.search);
+    const deviceId = params.get('deviceId');
+    if (!deviceId) location.href = '/user/dashboard.html';
+
+    document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/'; });
+
+    async function loadDevice() {
+      const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' });
+      const el = document.getElementById('deviceInfo');
+      if (!r.ok) {
+        el.textContent = 'Erro: ' + (r.error || JSON.stringify(r));
+        return;
+      }
+      const d = r.device;
+      el.innerHTML = `
+        <div><strong>DeviceId:</strong> ${d.deviceId}</div>
+        <div><strong>Teclado ativo:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo' : 'Desativado'}</div>
+        <div><strong>Versão do texto:</strong> ${d.inAppTextConsentVersion || '-'}</div>
+        <div><strong>Aceite em:</strong> ${d.inAppTextConsentTs ? new Date(d.inAppTextConsentTs).toLocaleString() : '-'}</div>
+      `;
+    }
+
+    async function loadEntries() {
+      const r = await apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/items?type=in_app_text_input', { method:'GET' });
+      const tbody = document.querySelector('#entriesTable tbody');
+      tbody.innerHTML = '';
+      if (!r.ok) {
+        tbody.innerHTML = `<tr><td colspan="6">Erro: ${r.error || JSON.stringify(r)}</td></tr>`;
+        return;
+      }
+      const items = r.items || [];
+      document.getElementById('countBadge').textContent = `${items.length} item(ns)`;
+      if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="6">Nenhuma entrada sincronizada ainda.</td></tr>';
+        return;
+      }
+      items.forEach(item => {
+        const payload = item.payload && item.payload.payload ? item.payload.payload : (item.payload || {});
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${payload.capturedAtMs ? new Date(payload.capturedAtMs).toLocaleString() : (item.ts ? new Date(item.ts).toLocaleString() : '-')}</td>
+          <td>${payload.screenName || '-'}</td>
+          <td>${payload.fieldName || '-'}</td>
+          <td>${payload.text || '-'}</td>
+          <td>${payload.textLength != null ? payload.textLength : '-'}</td>
+          <td>${payload.captureScope || '-'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    Promise.all([loadDevice(), loadEntries()]);
+  </script>
+</body>
+</html>

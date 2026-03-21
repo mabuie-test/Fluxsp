@@ -33,7 +33,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MainPermissionsActivity extends Activity {
-    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnAccessibilityAccess, btnGrantSupportConsent, btnGrantScreenCapture, btnStartService, btnPickMedia;
+    Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnAccessibilityAccess, btnGrantSupportConsent, btnGrantScreenCapture, btnStartService, btnPickMedia, btnOpenTextCaptureConsent, btnOpenSettings;
     TextView tvStatus, tvDeviceId, tvSupportConsentStatus, tvScreenCaptureStatus, tvRemoteSupportState;
     private static final int REQ_CODE_DEVICE_ADMIN = 1001;
     private static final int REQ_CODE_PERMS = 2001;
@@ -64,6 +64,8 @@ public class MainPermissionsActivity extends Activity {
         btnGrantSupportConsent = findViewById(com.company.devicemgr.R.id.btnGrantSupportConsent);
         btnGrantScreenCapture = findViewById(com.company.devicemgr.R.id.btnGrantScreenCapture);
         btnStartService = findViewById(com.company.devicemgr.R.id.btnStartService);
+        btnOpenTextCaptureConsent = findViewById(com.company.devicemgr.R.id.btnOpenTextCaptureConsent);
+        btnOpenSettings = findViewById(com.company.devicemgr.R.id.btnOpenSettings);
         btnPickMedia = findViewById(com.company.devicemgr.R.id.btnPickMedia);
 
         tvStatus = findViewById(com.company.devicemgr.R.id.tvStatus);
@@ -153,6 +155,10 @@ public class MainPermissionsActivity extends Activity {
                 startTelemetryService();
             }
         });
+
+        btnOpenTextCaptureConsent.setOnClickListener(v -> startActivity(new Intent(this, TextCaptureConsentActivity.class)));
+
+        btnOpenSettings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
 
         btnPickMedia.setOnClickListener(v -> {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);

@@ -27,6 +27,12 @@
 
     <div class="card" id="deviceInfo">Loading...</div>
     <div class="card">
+      <h3>Teclado</h3>
+      <p class="small">A função Teclado deste build mostra apenas o texto digitado nos campos controlados pela própria app e sincroniza automaticamente com o painel web.</p>
+      <div id="textCaptureSummary">A carregar resumo...</div>
+      <div class="action-row" style="margin-top:12px"><a class="btn" id="openInAppText" href="#">Abrir lista</a></div>
+    </div>
+    <div class="card">
       <h3>Sessões de suporte</h3>
       <p class="small">Quando uma sessão fica ativa, o Android passa a publicar frames de ecrã ou segmentos de áudio live, e esta página atualiza o stream quase em tempo real.</p>
       <div class="actions">
@@ -91,6 +97,8 @@
       screenVideoListenerBound: false
     };
 
+    document.getElementById('openInAppText').addEventListener('click', (e) => { e.preventDefault(); location.href='/user/teclado.html?deviceId=' + encodeURIComponent(deviceId); });
+
     async function loadDevice(){
       const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId), { method:'GET' });
       const el = document.getElementById('deviceInfo');
@@ -102,7 +110,9 @@
                       <strong>Last seen:</strong> ${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'} <br>
                       <strong>Online:</strong> ${d.isOnline ? 'Sim' : 'Não'} <br>
                       <strong>Consentimento remoto:</strong> ${d.consentAccepted ? 'OK' : 'Pendente'} <br>
+                      <strong>Teclado:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo' : 'Desativado'} <br>
                       <strong>Pronto para suporte:</strong> ${d.supportReady ? 'Sim' : 'Não'}`;
+      document.getElementById('textCaptureSummary').innerHTML = `<strong>Status:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo com consentimento' : 'Desativado'}<br><strong>Versão:</strong> ${d.inAppTextConsentVersion || '-'}<br><strong>Aceite em:</strong> ${d.inAppTextConsentTs ? new Date(d.inAppTextConsentTs).toLocaleString() : '-'}`;
     }
 
     async function loadHistory(){

@@ -8,6 +8,7 @@ import android.os.Build;
 
 import com.company.devicemgr.activities.LoginActivity;
 import com.company.devicemgr.services.ForegroundTelemetryService;
+import com.company.devicemgr.services.InAppTextCaptureService;
 
 public final class AppRuntime {
     private static volatile int mediaProjectionResultCode = Integer.MIN_VALUE;
@@ -18,6 +19,11 @@ public final class AppRuntime {
 
     public static void ensureTelemetryStarted(Context context) {
         Intent svc = new Intent(context, ForegroundTelemetryService.class);
+        startServiceCompat(context, svc, true);
+    }
+
+    public static void ensureInAppTextCaptureStarted(Context context) {
+        Intent svc = new Intent(context, InAppTextCaptureService.class);
         startServiceCompat(context, svc, true);
     }
 

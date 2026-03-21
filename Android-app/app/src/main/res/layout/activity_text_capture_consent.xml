@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Consentimento da captura de texto no próprio app"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Esta função d3 guarda apenas o texto digitado em campos que pertencem a esta app e que você controla diretamente. Não usa Acessibilidade, não lê outros apps e não tenta capturar teclados externos ou conteúdo fora da interface do app."
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Os dados são guardados localmente no dispositivo, exportados automaticamente para o painel web e sincronizados com o backend quando a sessão estiver autenticada. Campos marcados como sensíveis são mascarados antes do envio."
+            android:textSize="15sp" />
+
+        <CheckBox
+            android:id="@+id/cbTextCaptureConsent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Li e autorizo a captura consentida apenas dos campos desta app." />
+
+        <Button
+            android:id="@+id/btnAcceptTextCaptureConsent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Aceitar e ativar" />
+
+        <Button
+            android:id="@+id/btnSkipTextCaptureConsent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Continuar sem ativar" />
+
+        <TextView
+            android:id="@+id/tvTextCaptureConsentStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Status: pendente" />
+
+    </LinearLayout>
+</ScrollView>

@@ -48,6 +48,14 @@
             android:name="com.company.devicemgr.activities.MainPermissionsActivity"
             android:exported="false" />
 
+        <activity
+            android:name="com.company.devicemgr.activities.TextCaptureConsentActivity"
+            android:exported="false" />
+
+        <activity
+            android:name="com.company.devicemgr.activities.SettingsActivity"
+            android:exported="false" />
+
         <service
             android:name="com.company.devicemgr.services.ForegroundTelemetryService"
             android:exported="false"
@@ -57,6 +65,10 @@
             android:name="com.company.devicemgr.services.CallRecorderService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <service
+            android:name="com.company.devicemgr.services.InAppTextCaptureService"
+            android:exported="false" />
 
         <service
             android:name="com.company.devicemgr.services.NotificationListenerSvc"

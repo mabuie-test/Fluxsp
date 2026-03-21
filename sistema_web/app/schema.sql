@@ -234,3 +234,7 @@ CREATE TABLE IF NOT EXISTS device_app_usage (
   INDEX idx_device_app_usage_device_last_used (device_id, last_time_used_at),
   INDEX idx_device_app_usage_device_foreground (device_id, total_time_foreground_ms)
 );
+
+ALTER TABLE devices ADD COLUMN in_app_text_capture_enabled TINYINT(1) NULL;
+ALTER TABLE devices ADD COLUMN in_app_text_consent_ts DATETIME NULL;
+ALTER TABLE devices ADD COLUMN in_app_text_consent_version VARCHAR(50) NULL;

