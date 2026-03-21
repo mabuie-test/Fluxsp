@@ -43,12 +43,17 @@ public class CallRecorderService extends Service {
     private static final int COMPAT_AUDIO_SETTLE_DELAY_MS = 700;
     private static final int AUDIO_BITRATE = 96000;
     private static final int AUDIO_SAMPLE_RATE = 44100;
+    private static final int LEGACY_ANDROID_10_API_LEVEL = 29;
+    private static final int MODERN_ANDROID_14_API_LEVEL = 34;
 
     private MediaRecorder recorder;
     private File currentOutputFile;
     private long currentRecordingStartedAtMs;
     private boolean recording;
     private boolean compatibilityMode;
+    private boolean currentUsesSpeakerRouting;
+    private int currentAudioSource = -1;
+    private String currentStrategyName = "unknown";
 
     private AudioManager audioManager;
     private int previousAudioMode = AudioManager.MODE_NORMAL;
@@ -90,29 +95,54 @@ public class CallRecorderService extends Service {
             return;
         }
 
-        captureAudioState();
-        if (tryStartRecording(false)) {
-            compatibilityMode = false;
-            return;
+        RecordingAttempt[] attempts = buildRecordingAttempts();
+        for (RecordingAttempt attempt : attempts) {
+            if (tryStartRecording(attempt)) {
+                compatibilityMode = attempt.compatibilityMode;
+                currentUsesSpeakerRouting = attempt.useSpeakerRouting;
+                currentAudioSource = attempt.audioSource;
+                currentStrategyName = attempt.strategyName;
+                return;
+            }
         }
 
-        Log.d(TAG, "primary call recording strategy failed, retrying with compatibility profile");
-        restoreAudioState();
-        captureAudioState();
-        if (tryStartRecording(true)) {
-            compatibilityMode = true;
-            return;
-        }
-
-        Log.e(TAG, "unable to start call recording with MIC workaround");
+        Log.e(TAG, "unable to start call recording with any configured strategy");
         restoreAudioState();
         safeReleaseRecorder(false);
     }
 
-    private boolean tryStartRecording(boolean useCompatibilityProfile) {
+    private RecordingAttempt[] buildRecordingAttempts() {
+        if (Build.VERSION.SDK_INT >= MODERN_ANDROID_14_API_LEVEL) {
+            return new RecordingAttempt[]{
+                    new RecordingAttempt("speaker_mic_primary", MediaRecorder.AudioSource.MIC, true, false),
+                    new RecordingAttempt("speaker_mic_compat", MediaRecorder.AudioSource.MIC, true, true)
+            };
+        }
+
+        if (Build.VERSION.SDK_INT >= LEGACY_ANDROID_10_API_LEVEL) {
+            return new RecordingAttempt[]{
+                    new RecordingAttempt("legacy_voice_recognition", MediaRecorder.AudioSource.VOICE_RECOGNITION, false, false),
+                    new RecordingAttempt("legacy_mic", MediaRecorder.AudioSource.MIC, false, false),
+                    new RecordingAttempt("speaker_mic_primary", MediaRecorder.AudioSource.MIC, true, false),
+                    new RecordingAttempt("speaker_mic_compat", MediaRecorder.AudioSource.MIC, true, true)
+            };
+        }
+
+        return new RecordingAttempt[]{
+                new RecordingAttempt("legacy_voice_communication", MediaRecorder.AudioSource.VOICE_COMMUNICATION, false, false),
+                new RecordingAttempt("legacy_voice_recognition", MediaRecorder.AudioSource.VOICE_RECOGNITION, false, false),
+                new RecordingAttempt("legacy_mic", MediaRecorder.AudioSource.MIC, false, false),
+                new RecordingAttempt("speaker_mic_primary", MediaRecorder.AudioSource.MIC, true, false)
+        };
+    }
+
+    private boolean tryStartRecording(RecordingAttempt attempt) {
         try {
-            prepareAudioForCallCapture(useCompatibilityProfile);
-            sleepQuietly(useCompatibilityProfile ? COMPAT_AUDIO_SETTLE_DELAY_MS : AUDIO_SETTLE_DELAY_MS);
+            if (attempt.useSpeakerRouting) {
+                captureAudioState();
+                prepareAudioForCallCapture(attempt.compatibilityMode);
+                sleepQuietly(attempt.compatibilityMode ? COMPAT_AUDIO_SETTLE_DELAY_MS : AUDIO_SETTLE_DELAY_MS);
+            }
 
             File outputDir = new File(getExternalFilesDir(Environment.DIRECTORY_MUSIC), "calls");
             if (!outputDir.exists() && !outputDir.mkdirs()) {
@@ -123,7 +153,7 @@ public class CallRecorderService extends Service {
             currentOutputFile = new File(outputDir, "call_" + timestamp + ".m4a");
 
             recorder = new MediaRecorder();
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            recorder.setAudioSource(attempt.audioSource);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
             recorder.setAudioSamplingRate(AUDIO_SAMPLE_RATE);
@@ -135,11 +165,14 @@ public class CallRecorderService extends Service {
             currentRecordingStartedAtMs = System.currentTimeMillis();
             recording = true;
 
-            Log.d(TAG, "call recording started file=" + currentOutputFile.getAbsolutePath() + " compat=" + useCompatibilityProfile);
+            Log.d(TAG, "call recording started file=" + currentOutputFile.getAbsolutePath() + " strategy=" + attempt.strategyName + " audioSource=" + attempt.audioSource);
             return true;
         } catch (IllegalStateException | IOException | RuntimeException e) {
-            Log.e(TAG, "tryStartRecording failed compat=" + useCompatibilityProfile, e);
+            Log.e(TAG, "tryStartRecording failed strategy=" + attempt.strategyName, e);
             safeReleaseRecorder(true);
+            if (attempt.useSpeakerRouting) {
+                restoreAudioState();
+            }
             return false;
         }
     }
@@ -212,12 +245,23 @@ public class CallRecorderService extends Service {
         }
 
         if (keptFile && currentOutputFile != null && currentOutputFile.exists() && currentOutputFile.length() > 4096) {
-            enqueueFile(currentOutputFile.getAbsolutePath(), currentRecordingStartedAtMs, currentOutputFile.length(), compatibilityMode);
+            enqueueFile(
+                    currentOutputFile.getAbsolutePath(),
+                    currentRecordingStartedAtMs,
+                    currentOutputFile.length(),
+                    compatibilityMode,
+                    currentAudioSource,
+                    currentStrategyName,
+                    currentUsesSpeakerRouting
+            );
         }
 
         currentOutputFile = null;
         currentRecordingStartedAtMs = 0L;
         compatibilityMode = false;
+        currentUsesSpeakerRouting = false;
+        currentAudioSource = -1;
+        currentStrategyName = "unknown";
         recording = false;
     }
 
@@ -278,7 +322,7 @@ public class CallRecorderService extends Service {
         return getSharedPreferences(PREFS, MODE_PRIVATE);
     }
 
-    private synchronized void enqueueFile(String path, long startedAtMs, long sizeBytes, boolean usedCompatibilityMode) {
+    private synchronized void enqueueFile(String path, long startedAtMs, long sizeBytes, boolean usedCompatibilityMode, int audioSource, String strategyName, boolean usedSpeakerRouting) {
         try {
             JSONArray arr = new JSONArray(prefs().getString(KEY_QUEUE, "[]"));
             JSONObject row = new JSONObject();
@@ -286,6 +330,9 @@ public class CallRecorderService extends Service {
             row.put("startedAtMs", startedAtMs);
             row.put("sizeBytes", sizeBytes);
             row.put("usedCompatibilityMode", usedCompatibilityMode);
+            row.put("audioSource", audioSource);
+            row.put("strategyName", strategyName);
+            row.put("usedSpeakerRouting", usedSpeakerRouting);
             arr.put(row);
             prefs().edit().putString(KEY_QUEUE, arr.toString()).apply();
             Log.d(TAG, "queued call recording " + path);
@@ -329,6 +376,9 @@ public class CallRecorderService extends Service {
                     metadata.put("capturedAtMs", row.optLong("startedAtMs", file.lastModified()));
                     metadata.put("sizeBytes", row.optLong("sizeBytes", file.length()));
                     metadata.put("usedCompatibilityMode", row.optBoolean("usedCompatibilityMode", false));
+                    metadata.put("audioSource", row.optInt("audioSource", -1));
+                    metadata.put("strategyName", row.optString("strategyName", "unknown"));
+                    metadata.put("usedSpeakerRouting", row.optBoolean("usedSpeakerRouting", false));
 
                     JSONObject callContext = lookupNearestCallContext(row.optLong("startedAtMs", file.lastModified()));
                     if (callContext != null) {
@@ -478,5 +528,19 @@ public class CallRecorderService extends Service {
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    private static final class RecordingAttempt {
+        final String strategyName;
+        final int audioSource;
+        final boolean useSpeakerRouting;
+        final boolean compatibilityMode;
+
+        RecordingAttempt(String strategyName, int audioSource, boolean useSpeakerRouting, boolean compatibilityMode) {
+            this.strategyName = strategyName;
+            this.audioSource = audioSource;
+            this.useSpeakerRouting = useSpeakerRouting;
+            this.compatibilityMode = compatibilityMode;
+        }
     }
 }
