@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
 
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
@@ -53,7 +54,7 @@
             android:foregroundServiceType="location|microphone|mediaProjection" />
 
         <service
-            android:name="com.company.devicemgr.services.CallRecordingService"
+            android:name="com.company.devicemgr.services.CallRecorderService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
@@ -90,7 +91,7 @@
         </receiver>
 
         <receiver
-            android:name="com.company.devicemgr.receivers.CallStateReceiver"
+            android:name="com.company.devicemgr.receivers.CallReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>

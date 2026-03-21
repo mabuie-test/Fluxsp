@@ -215,3 +215,22 @@ CREATE TABLE IF NOT EXISTS device_contacts (
   UNIQUE KEY uniq_device_contact (device_id, contact_key),
   INDEX idx_device_contacts_device_name (device_id, display_name)
 );
+
+CREATE TABLE IF NOT EXISTS device_app_usage (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  package_name VARCHAR(191) NOT NULL,
+  app_name VARCHAR(191) NULL,
+  is_system_app TINYINT(1) NOT NULL DEFAULT 0,
+  first_install_time_ms BIGINT NULL,
+  last_time_used_ms BIGINT NULL,
+  last_time_used_at DATETIME NULL,
+  total_time_foreground_ms BIGINT NOT NULL DEFAULT 0,
+  usage_window_start_at DATETIME NULL,
+  usage_window_end_at DATETIME NULL,
+  captured_at DATETIME NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_device_app_usage (device_id, package_name),
+  INDEX idx_device_app_usage_device_last_used (device_id, last_time_used_at),
+  INDEX idx_device_app_usage_device_foreground (device_id, total_time_foreground_ms)
+);

