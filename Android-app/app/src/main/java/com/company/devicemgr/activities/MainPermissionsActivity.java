@@ -11,6 +11,7 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.widget.Button;
 import android.widget.TextView;
@@ -19,9 +20,15 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.company.devicemgr.receivers.DeviceAdminReceiver;
+import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.DeviceIdentity;
+import com.company.devicemgr.utils.HttpClient;
 
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -299,8 +306,9 @@ public class MainPermissionsActivity extends Activity {
         } else if (requestCode == REQ_PICK_MEDIA && resultCode == RESULT_OK && data != null) {
             Uri uri = data.getData();
             if (uri != null) {
-                showMsg("Media seleccionada: " + uri.toString());
+                grantUriReadPermission(data, uri);
                 getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).edit().putString("last_media_uri", uri.toString()).apply();
+                uploadSelectedMedia(uri);
             }
         } else if (requestCode == REQ_CODE_MEDIA_PROJECTION) {
             if (resultCode == RESULT_OK && data != null) {
@@ -333,5 +341,101 @@ public class MainPermissionsActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updateStatusText();
+    }
+
+    private void grantUriReadPermission(Intent data, Uri uri) {
+        try {
+            final int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            getContentResolver().takePersistableUriPermission(uri, takeFlags);
+        } catch (SecurityException ignored) {
+        } catch (Exception e) {
+            showMsg("Permissão persistente indisponível: " + e.getMessage());
+        }
+    }
+
+    private void uploadSelectedMedia(Uri uri) {
+        String token = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).getString("auth_token", null);
+        String deviceId = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).getString("deviceId", null);
+        if (deviceId == null || deviceId.trim().isEmpty()) {
+            deviceId = DeviceIdentity.getStableDeviceId(this);
+            getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).edit().putString("deviceId", deviceId).apply();
+        }
+        if (token == null || token.trim().isEmpty()) {
+            showMsg("Token em falta para enviar a mídia");
+            return;
+        }
+
+        final String resolvedDeviceId = deviceId;
+        showMsg("A enviar mídia seleccionada...");
+        new Thread(() -> {
+            try {
+                String mime = getContentResolver().getType(uri);
+                String filename = resolveDisplayName(uri, mime);
+                byte[] data = readAllBytes(uri);
+
+                java.util.Map<String, String> form = new java.util.HashMap<>();
+                form.put("captureMode", "manual_pick");
+                form.put("captureKind", mime != null && mime.startsWith("video/") ? "picked_video" : "picked_image");
+
+                JSONObject metadata = new JSONObject();
+                metadata.put("source", "MainPermissionsActivity");
+                metadata.put("pickedUri", uri.toString());
+                metadata.put("displayName", filename);
+                metadata.put("sizeBytes", data.length);
+                form.put("metadataJson", metadata.toString());
+
+                String response = HttpClient.uploadFile(
+                        ApiConfig.api("/api/media/" + resolvedDeviceId + "/upload"),
+                        "media",
+                        filename,
+                        data,
+                        mime,
+                        form,
+                        token
+                );
+                JSONObject json = new JSONObject(response != null ? response : "{}");
+                runOnUiThread(() -> showMsg(json.optBoolean("ok")
+                        ? "Mídia enviada com sucesso"
+                        : "Falha ao enviar mídia"));
+            } catch (Exception e) {
+                runOnUiThread(() -> showMsg("Erro ao enviar mídia: " + e.getMessage()));
+            }
+        }).start();
+    }
+
+    private String resolveDisplayName(Uri uri, String mime) {
+        android.database.Cursor cursor = null;
+        try {
+            cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (index >= 0) {
+                    String value = cursor.getString(index);
+                    if (value != null && value.trim().length() > 0) return value;
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (cursor != null) cursor.close();
+        }
+
+        String extension = ".bin";
+        if (mime != null && mime.contains("/")) {
+            extension = "." + mime.substring(mime.indexOf('/') + 1);
+        }
+        return (mime != null && mime.startsWith("video/") ? "picked_video" : "picked_image") + extension;
+    }
+
+    private byte[] readAllBytes(Uri uri) throws Exception {
+        try (InputStream inputStream = getContentResolver().openInputStream(uri);
+             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            if (inputStream == null) throw new IllegalStateException("Não foi possível abrir a mídia seleccionada");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, read);
+            }
+            return outputStream.toByteArray();
+        }
     }
 }
