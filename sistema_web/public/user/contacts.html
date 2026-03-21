@@ -1,10 +1,16 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"/><title>Mensagens</title><link rel="stylesheet" href="/css/styles.css"></head>
+<head><meta charset="utf-8"/><title>Contactos</title><link rel="stylesheet" href="/css/styles.css"></head>
 <body>
   <div class="container">
-    <header style="display:flex;justify-content:space-between"><h1>Mensagens (SMS)</h1><div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div></header>
-    <div class="card"><label>Dispositivo: <select id="deviceSelect"><option value="">Selecione</option></select></label> <label>DeviceId: <input id="deviceId" /></label><button id="btnLoad">Carregar</button></div>
+    <header style="display:flex;justify-content:space-between"><h1>Contactos</h1><div><a href="/user/dashboard.html">Voltar</a> <button id="logout">Logout</button></div></header>
+    <div class="card">
+      <label>Dispositivo:
+        <select id="deviceSelect"><option value="">Selecione um dispositivo</option></select>
+      </label>
+      <input id="deviceId" placeholder="DeviceId" />
+      <button id="btnLoad">Carregar</button>
+    </div>
     <div class="card"><ul id="list" style="list-style:none;padding-left:0"></ul></div>
   </div>
   <script src="/js/api.js"></script>
@@ -17,9 +23,9 @@
 
     async function loadDeviceOptions(){
       const res = await apiFetch('/api/devices/my', { method:'GET' });
-      if (!res.ok) return;
       const sel = document.getElementById('deviceSelect');
-      sel.innerHTML = '<option value="">Selecione</option>';
+      if (!res.ok) return;
+      sel.innerHTML = '<option value="">Selecione um dispositivo</option>';
       (res.devices || []).forEach(d => {
         const opt = document.createElement('option');
         opt.value = d.deviceId;
@@ -27,23 +33,20 @@
         if (d.deviceId === document.getElementById('deviceId').value) opt.selected = true;
         sel.appendChild(opt);
       });
-      sel.addEventListener('change', () => document.getElementById('deviceId').value = sel.value);
+      sel.addEventListener('change', () => {
+        document.getElementById('deviceId').value = sel.value;
+      });
     }
 
     document.getElementById('btnLoad').addEventListener('click', async () => {
       const deviceId = document.getElementById('deviceId').value.trim();
       if (!deviceId) return alert('DeviceId required');
-      const r = await apiFetch('/api/telemetry/' + encodeURIComponent(deviceId) + '/items?type=sms', { method:'GET' });
+      const r = await apiFetch('/api/devices/' + encodeURIComponent(deviceId) + '/contacts', { method:'GET' });
       const ul = document.getElementById('list'); ul.innerHTML = '';
       if (!r.ok) { ul.innerHTML = '<li>Erro: ' + JSON.stringify(r) + '</li>'; return; }
-      r.items.forEach(it => {
-        const ts = new Date(it.ts).toLocaleString();
-        const p = it.payload || it;
-        const contactName = p.payload && p.payload.contactName ? p.payload.contactName : (p.contactName || '');
-        const from = p.payload && p.payload.from ? p.payload.from : (p.from||'');
-        const body = p.payload && p.payload.body ? p.payload.body : (p.body||'');
+      (r.contacts || []).forEach(contact => {
         const li = document.createElement('li');
-        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><small>${ts}</small><div><strong>Nome:</strong> ${contactName || '—'}</div><div><strong>From:</strong> ${from}</div><div>${body}</div></div>`;
+        li.innerHTML = `<div style="padding:8px;border-bottom:1px solid #eee"><div><strong>${contact.display_name || 'Sem nome'}</strong></div><div>${contact.phone_number || '-'}</div><div>${contact.email || ''}</div><small>${contact.updated_at ? new Date(contact.updated_at).toLocaleString() : ''}</small></div>`;
         ul.appendChild(li);
       });
     });

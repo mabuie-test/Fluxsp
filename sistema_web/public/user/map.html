@@ -22,7 +22,6 @@
   </style>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -33,6 +32,7 @@
 
     <div class="card">
       <div class="controls">
+        <select id="deviceSelect" title="Dispositivo"><option value="">Selecione um dispositivo</option></select>
         <input id="deviceId" placeholder="Cole aqui o deviceId (ou abrir com ?deviceId=...)" />
         <select id="timeRange" title="Filtro temporal">
           <option value="24h">Últimas 24h</option>
@@ -99,7 +99,24 @@
 
     // map state
     let map=null, markers=[], lastMarker=null, poly=null, latlngs=[];
-    let socket=null, currentDevice=null, autoRefreshHandle=null;
+    let realtimeStream=null, currentDevice=null, autoRefreshHandle=null;
+
+    async function loadDeviceOptions() {
+      const res = await apiFetch('/api/devices/my', { method:'GET' });
+      if (!res.ok) return;
+      const sel = document.getElementById('deviceSelect');
+      sel.innerHTML = '<option value="">Selecione um dispositivo</option>';
+      (res.devices || []).forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = (d.model || d.name || d.deviceId) + (d.model || d.name ? ` (${d.deviceId})` : '');
+        if (d.deviceId === document.getElementById('deviceId').value) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => {
+        document.getElementById('deviceId').value = sel.value;
+      });
+    }
 
     function ensureMap(){
       if (!map) {
@@ -116,7 +133,7 @@
       latlngs=[];
       document.getElementById('list').innerHTML='';
       document.getElementById('status').innerText='Limpo';
-      if (socket) { try{ socket.emit('leave_device_room', currentDevice); }catch(e){} try{ socket.disconnect(); }catch(e){} socket=null; currentDevice=null; }
+      if (realtimeStream) { try{ realtimeStream.close(); }catch(e){} realtimeStream=null; currentDevice=null; }
       if (autoRefreshHandle) { clearInterval(autoRefreshHandle); autoRefreshHandle = null; }
     }
 
@@ -207,21 +224,30 @@
       }
     }
 
-    // realtime socket handling
-    function startRealtime(deviceId) {
-      if (socket) return;
-      socket = io(window.location.origin, { transports:['websocket','polling'] });
+    async function startRealtime(deviceId) {
+      if (realtimeStream) return;
       currentDevice = deviceId;
-      socket.on('connect', ()=>{ console.log('socket connected', socket.id); socket.emit('join_device_room', deviceId); document.getElementById('status').innerText = 'Realtime ligado'; });
-      socket.on('telemetry', data => handleRealtimeData(data));
-      socket.on('telemetria', data => handleRealtimeData(data)); // fallback
-      socket.onAny((ev,p) => console.debug('socket event', ev, p));
+      const cfg = await apiFetch('/api/realtime/config?deviceId=' + encodeURIComponent(deviceId), { method:'GET' });
+      if (!cfg.ok || !cfg.streamUrl) {
+        document.getElementById('status').innerText = 'Realtime indisponível; polling ativo';
+        return;
+      }
+      realtimeStream = new EventSource(cfg.streamUrl);
+      realtimeStream.addEventListener('open', () => {
+        document.getElementById('status').innerText = 'Realtime SSE ligado';
+      });
+      realtimeStream.addEventListener('telemetry', event => {
+        try { handleRealtimeData(JSON.parse(event.data)); } catch(e) { console.error('realtime telemetry err', e); }
+      });
+      realtimeStream.addEventListener('error', () => {
+        try { realtimeStream.close(); } catch(e) {}
+        realtimeStream = null;
+      });
     }
     function stopRealtime() {
-      if (!socket) return;
-      try { socket.emit('leave_device_room', currentDevice); } catch(e) {}
-      try { socket.disconnect(); } catch(e) {}
-      socket = null; currentDevice = null;
+      if (!realtimeStream) return;
+      try { realtimeStream.close(); } catch(e) {}
+      realtimeStream = null; currentDevice = null;
       document.getElementById('status').innerText = 'Realtime desligado';
     }
 
@@ -268,6 +294,7 @@
 
     // autoload from querystring
     const q = new URLSearchParams(window.location.search);
+    loadDeviceOptions();
     if (q.get('deviceId')) { document.getElementById('deviceId').value = q.get('deviceId'); setTimeout(()=>{ document.getElementById('btnLoad').click(); }, 300); }
   </script>
 </body>

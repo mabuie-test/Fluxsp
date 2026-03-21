@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.telephony.TelephonyManager;
 
 import com.company.devicemgr.services.CallRecordingService;
+import com.company.devicemgr.utils.AppRuntime;
 
 public class CallStateReceiver extends BroadcastReceiver {
     @Override
@@ -18,10 +19,10 @@ public class CallStateReceiver extends BroadcastReceiver {
 
         if (TelephonyManager.EXTRA_STATE_OFFHOOK.equals(state)) {
             svc.setAction(CallRecordingService.ACTION_START_RECORDING);
-            context.startService(svc);
+            AppRuntime.startServiceCompat(context, svc, true);
         } else if (TelephonyManager.EXTRA_STATE_IDLE.equals(state)) {
             svc.setAction(CallRecordingService.ACTION_STOP_RECORDING);
-            context.startService(svc);
+            AppRuntime.startServiceCompat(context, svc, true);
         }
     }
 }
