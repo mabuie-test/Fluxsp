@@ -41,9 +41,11 @@ public class MainPermissionsActivity extends Activity {
     private static final int REQ_CODE_MEDIA_PROJECTION = 3002;
     private static final String SUPPORT_CONSENT_VERSION = "support-session-v2";
     private static final int ANDROID_13_API_LEVEL = 33;
+    private static final int ANDROID_14_API_LEVEL = 34;
     private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
+    private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
     private static final String POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS";
 
     @Override
@@ -156,6 +158,14 @@ public class MainPermissionsActivity extends Activity {
     }
 
     private String[] getStoragePermissionsForCurrentVersion() {
+        if (Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL) {
+            return new String[]{
+                    READ_MEDIA_IMAGES_PERMISSION,
+                    READ_MEDIA_VIDEO_PERMISSION,
+                    READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION,
+                    READ_MEDIA_AUDIO_PERMISSION
+            };
+        }
         if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
             return new String[]{READ_MEDIA_IMAGES_PERMISSION, READ_MEDIA_VIDEO_PERMISSION, READ_MEDIA_AUDIO_PERMISSION};
         }

