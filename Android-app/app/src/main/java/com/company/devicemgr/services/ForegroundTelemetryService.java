@@ -87,6 +87,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private volatile MediaRecorder screenRecorder = null;
     private volatile File screenRecorderFile = null;
     private volatile String activeScreenSessionId = null;
+    private volatile String activeAudioSessionId = null;
     private volatile boolean remoteScreenSegmentRunning = false;
     private volatile boolean remoteAudioSegmentRunning = false;
     private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
@@ -375,6 +376,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private void maybeRunRemoteSupportStream(JSONObject activeSession) {
         if (activeSession == null || activeSession.optString("sessionId", "").length() == 0) {
             activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            releaseScreenProjection();
             return;
         }
         String requestType = activeSession.optString("requestType", "");
@@ -382,18 +385,26 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
         if ("ambient_audio".equals(requestType)) {
             activeScreenSessionId = null;
+            activeAudioSessionId = sessionId;
+            releaseScreenProjection();
             maybeStartRemoteAudioSegment(sessionId);
             return;
         }
 
         if ("screen".equals(requestType)) {
             activeScreenSessionId = sessionId;
+            activeAudioSessionId = null;
             maybeStartRemoteScreenSegment(sessionId);
+            return;
         }
+
+        activeScreenSessionId = null;
+        activeAudioSessionId = null;
+        releaseScreenProjection();
     }
 
     private void maybeStartRemoteScreenSegment(String sessionId) {
-        if (remoteScreenSegmentRunning) return;
+        if (remoteScreenSegmentRunning || !isScreenSessionActive(sessionId)) return;
         remoteScreenSegmentRunning = true;
         new Thread(() -> {
             try {
@@ -405,7 +416,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void maybeStartRemoteAudioSegment(String sessionId) {
-        if (remoteAudioSegmentRunning) return;
+        if (remoteAudioSegmentRunning || !isAudioSessionActive(sessionId)) return;
         remoteAudioSegmentRunning = true;
         new Thread(() -> {
             try {
@@ -414,6 +425,14 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 remoteAudioSegmentRunning = false;
             }
         }, "remote-audio-segment").start();
+    }
+
+    private boolean isScreenSessionActive(String sessionId) {
+        return sessionId != null && sessionId.equals(activeScreenSessionId);
+    }
+
+    private boolean isAudioSessionActive(String sessionId) {
+        return sessionId != null && sessionId.equals(activeAudioSessionId);
     }
 
     private void maybeUploadAllMedia() {
@@ -428,6 +447,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void captureAndUploadScreenFrame(String sessionId) {
+        if (!isScreenSessionActive(sessionId)) return;
         long now = System.currentTimeMillis();
         long lastUploadAt = prefs().getLong(KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX + sessionId, 0L);
         if ((now - lastUploadAt) < REMOTE_SCREEN_FRAME_INTERVAL_MS) return;
@@ -464,6 +484,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             );
             screenRecorder.start();
             Thread.sleep(Math.max(5_000L, REMOTE_SCREEN_FRAME_INTERVAL_MS - 500L));
+            if (!isScreenSessionActive(sessionId)) throw new IllegalStateException("stale_screen_session");
             screenRecorder.stop();
             screenRecorder.reset();
             screenRecorder.release();
@@ -489,6 +510,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
             String filename = "remote_screen_" + sessionId + "_" + startedAt + ".mp4";
             long uploadStartedAt = System.currentTimeMillis();
+            if (!isScreenSessionActive(sessionId)) throw new IllegalStateException("stale_screen_session");
             String res = HttpClient.uploadFile(
                     ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
                     "media",
@@ -624,6 +646,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private void captureAndUploadAmbientAudio(String sessionId) {
+        if (!isAudioSessionActive(sessionId)) return;
         long now = System.currentTimeMillis();
         long lastUploadAt = prefs().getLong(KEY_REMOTE_AUDIO_LAST_UPLOAD_PREFIX + sessionId, 0L);
         if ((now - lastUploadAt) < (REMOTE_AUDIO_SEGMENT_MS + 500L)) return;
@@ -665,6 +688,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             ByteArrayOutputStream pcm = new ByteArrayOutputStream();
             long deadline = captureStartedAt + REMOTE_AUDIO_SEGMENT_MS;
             while (System.currentTimeMillis() < deadline) {
+                if (!isAudioSessionActive(sessionId)) throw new IllegalStateException("stale_audio_session");
                 int read = recorder.read(chunk, 0, chunk.length);
                 if (read > 0) pcm.write(chunk, 0, read);
             }
@@ -687,6 +711,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
             long uploadStartedAt = System.currentTimeMillis();
             String filename = "remote_audio_" + sessionId + "_" + captureStartedAt + ".wav";
+            if (!isAudioSessionActive(sessionId)) throw new IllegalStateException("stale_audio_session");
             String res = HttpClient.uploadFile(
                     ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
                     "media",
