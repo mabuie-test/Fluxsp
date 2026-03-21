@@ -1037,9 +1037,9 @@ try {
         if ($normalized) {
             $normalized['stream'] = [
                 'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_sequence' : 'screen_sequence',
-                'pollIntervalMs' => 900,
-                'frameIntervalMs' => 220,
-                'segmentDurationMs' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 1200 : 350,
+                'pollIntervalMs' => 10000,
+                'frameIntervalMs' => 60000,
+                'segmentDurationMs' => 60000,
             ];
         }
         json_response(['ok' => true, 'session' => $normalized]);
