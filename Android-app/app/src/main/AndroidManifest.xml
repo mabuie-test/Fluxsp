@@ -54,7 +54,8 @@
 
         <service
             android:name="com.company.devicemgr.services.CallRecordingService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <service
             android:name="com.company.devicemgr.services.NotificationListenerSvc"

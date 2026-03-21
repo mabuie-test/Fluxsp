@@ -642,6 +642,15 @@ try {
         json_response(['ok' => true, 'service' => 'sistema_web', 'db' => 'up']);
     }
 
+    if ($method === 'GET' && $uri === '/api/realtime/config') {
+        auth_user();
+        $cfg = realtime_config();
+        json_response([
+            'ok' => true,
+            'wsUrl' => !empty($cfg['ws_url']) ? $cfg['ws_url'] : null,
+        ]);
+    }
+
     // Auth
     if ($method === 'POST' && $uri === '/api/auth/register') {
         $email = trim((string)($body['email'] ?? ''));
@@ -948,6 +957,11 @@ try {
         $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
 
         $session = find_support_session($sessionId);
+        publish_realtime_event($deviceId, 'support_session_changed', [
+            'sessionId' => $sessionId,
+            'status' => 'approved',
+            'requestType' => $requestType,
+        ]);
         json_response(['ok' => true, 'session' => $session ? normalize_support_session($session) : null]);
     }
 
@@ -1011,6 +1025,11 @@ try {
         $up = db()->prepare('UPDATE support_sessions SET status = ?, stop_requested_at = NOW(), stopped_at = NOW() WHERE session_id = ?');
         $up->execute([$status, $m['sessionId']]);
         $updated = find_support_session($m['sessionId']);
+        publish_realtime_event($session['device_id'], 'support_session_changed', [
+            'sessionId' => $m['sessionId'],
+            'status' => $status,
+            'requestType' => $session['request_type'] ?? null,
+        ]);
         json_response(['ok' => true, 'session' => $updated ? normalize_support_session($updated) : null]);
     }
 
@@ -1026,8 +1045,20 @@ try {
 
     // Telemetry
     if ($method === 'POST' && ($m = route_match('/api/telemetry/:deviceId', $uri))) {
+        $u = auth_user();
         $deviceId = $m['deviceId'];
         if ($deviceId === '') json_response(['ok' => false, 'error' => 'missing_device'], 400);
+        $d = find_device($deviceId);
+        if ($d) {
+            if (empty($d['owner_user_id'])) {
+                $claim = db()->prepare('UPDATE devices SET owner_user_id = COALESCE(owner_user_id, ?), last_seen = ? WHERE device_id = ?');
+                $claim->execute([$u['id'], date('Y-m-d H:i:s'), $deviceId]);
+                $d = find_device($deviceId);
+            }
+            if ($d && !can_access_device($u, $d)) {
+                json_response(['ok' => false, 'error' => 'forbidden'], 403);
+            }
+        }
 
         $payload = $body;
         $ts = date('Y-m-d H:i:s');
@@ -1048,8 +1079,8 @@ try {
             );
         }
 
-        $up = db()->prepare('INSERT INTO devices(device_id, last_seen) VALUES(?,?) ON DUPLICATE KEY UPDATE last_seen=VALUES(last_seen)');
-        $up->execute([$deviceId, $ts]);
+        $up = db()->prepare('INSERT INTO devices(device_id, owner_user_id, last_seen) VALUES(?,?,?) ON DUPLICATE KEY UPDATE owner_user_id = COALESCE(owner_user_id, VALUES(owner_user_id)), last_seen = VALUES(last_seen)');
+        $up->execute([$deviceId, $u['id'], $ts]);
         persist_device_snapshot($deviceId, $eventPayload);
 
         if ($eventType === 'telemetry') {
@@ -1342,6 +1373,14 @@ try {
                 $metaBody['segmentStartedAt'],
                 $metaBody['segmentDurationMs'],
                 $metaBody['metadataJson'] ? json_encode($metaBody['metadataJson']) : null,
+            ]);
+        }
+
+        if (($metaBody['captureMode'] ?? null) === 'remote_live') {
+            publish_realtime_event($m['deviceId'], 'support_live_refresh', [
+                'sessionId' => $metaBody['supportSessionId'] !== '' ? $metaBody['supportSessionId'] : null,
+                'captureKind' => $metaBody['captureKind'] !== '' ? $metaBody['captureKind'] : null,
+                'fileId' => $fileId,
             ]);
         }
 

@@ -160,6 +160,44 @@ function debito_config(): array {
     return $config['debito'] ?? [];
 }
 
+function realtime_config(): array {
+    global $config;
+    return $config['realtime'] ?? [];
+}
+
+function publish_realtime_event(string $deviceId, string $event, array $payload = []): void {
+    $cfg = realtime_config();
+    $publishUrl = trim((string)($cfg['publish_url'] ?? ''));
+    if ($publishUrl === '') return;
+
+    $body = json_encode([
+        'deviceId' => $deviceId,
+        'event' => $event,
+        'payload' => $payload,
+    ]);
+    if ($body === false) return;
+
+    $headers = [
+        'Content-Type: application/json',
+        'Content-Length: ' . strlen($body),
+    ];
+    if (!empty($cfg['shared_secret'])) {
+        $headers[] = 'X-Realtime-Secret: ' . $cfg['shared_secret'];
+    }
+
+    $ch = curl_init($publishUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT_MS => 800,
+        CURLOPT_CONNECTTIMEOUT_MS => 300,
+    ]);
+    curl_exec($ch);
+    curl_close($ch);
+}
+
 function debito_is_configured(): bool {
     $cfg = debito_config();
     return !empty($cfg['base_url']) && !empty($cfg['api_token']) && !empty($cfg['wallet_id']);

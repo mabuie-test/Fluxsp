@@ -79,6 +79,8 @@
     const liveState = {
       activeSessionId: null,
       pollHandle: null,
+      ws: null,
+      wsUrl: null,
       seenScreenIds: new Set(),
       seenAudioIds: new Set(),
       screenQueue: [],
@@ -151,6 +153,42 @@
     function stopLivePolling() {
       if (liveState.pollHandle) clearInterval(liveState.pollHandle);
       liveState.pollHandle = null;
+    }
+
+    function disconnectLiveSocket() {
+      if (!liveState.ws) return;
+      try { liveState.ws.close(); } catch(e) {}
+      liveState.ws = null;
+    }
+
+    async function ensureLiveSocket(){
+      if (liveState.ws || liveState.wsUrl === false) return;
+      try {
+        if (!liveState.wsUrl) {
+          const cfg = await apiFetch('/api/realtime/config', { method:'GET' });
+          liveState.wsUrl = cfg.ok && cfg.wsUrl ? cfg.wsUrl : false;
+        }
+        if (!liveState.wsUrl) return;
+        const ws = new WebSocket(liveState.wsUrl);
+        ws.addEventListener('open', () => {
+          ws.send(JSON.stringify({ action:'join', deviceId }));
+          document.getElementById('liveStreamHint').textContent = 'Realtime websocket ligado. Polling continua como fallback.';
+        });
+        ws.addEventListener('message', async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.deviceId !== deviceId) return;
+            if (data.event === 'support_live_refresh' || data.event === 'support_session_changed') {
+              await loadSupportState();
+            }
+          } catch(e) {}
+        });
+        ws.addEventListener('close', () => { liveState.ws = null; });
+        ws.addEventListener('error', () => { try { ws.close(); } catch(e) {} });
+        liveState.ws = ws;
+      } catch (e) {
+        liveState.wsUrl = false;
+      }
     }
 
     function resetLiveView(reason = 'Sem sessão ativa.') {
@@ -350,6 +388,7 @@
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
       await loadDevice();
+      await ensureLiveSocket();
       await loadSupportState();
       const items = await loadHistory();
       if (items && items.length>0) {
@@ -358,6 +397,7 @@
         if (loc && loc.lat && loc.lon) initMap(loc.lat, loc.lon);
         else initMap(0,0);
       } else initMap(0,0);
+      window.addEventListener('beforeunload', disconnectLiveSocket);
     })();
   </script>
 </body>

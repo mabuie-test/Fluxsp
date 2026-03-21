@@ -17,4 +17,9 @@ return [
         'wallet_id' => getenv('DEBITO_WALLET_ID') ?: '',
         'callback_url' => getenv('DEBITO_CALLBACK_URL') ?: '',
     ],
+    'realtime' => [
+        'ws_url' => getenv('REALTIME_WS_URL') ?: '',
+        'publish_url' => getenv('REALTIME_PUBLISH_URL') ?: '',
+        'shared_secret' => getenv('REALTIME_SHARED_SECRET') ?: '',
+    ],
 ];

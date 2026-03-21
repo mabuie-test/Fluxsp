@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS devices (
   device_id VARCHAR(191) NOT NULL UNIQUE,
   owner_user_id BIGINT UNSIGNED NULL,
   name VARCHAR(191) NULL,
+  imei VARCHAR(191) NULL,
+  model VARCHAR(191) NULL,
+  manufacturer VARCHAR(191) NULL,
   consent_accepted TINYINT(1) NULL,
   consent_ts DATETIME NULL,
   consent_text_version VARCHAR(50) NULL,
@@ -54,14 +57,21 @@ CREATE TABLE IF NOT EXISTS payments (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
   amount DECIMAL(10,2) NULL,
-  currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+  currency VARCHAR(10) NOT NULL DEFAULT 'MZN',
   status ENUM('pending','completed','rejected') NOT NULL DEFAULT 'pending',
   method VARCHAR(100) NULL,
   note TEXT NULL,
   media_file_id CHAR(36) NULL,
+  phone_msisdn VARCHAR(30) NULL,
+  provider VARCHAR(50) NULL,
+  provider_reference VARCHAR(100) NULL,
+  provider_status VARCHAR(50) NULL,
+  provider_payload_json JSON NULL,
+  debito_reference VARCHAR(100) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   processed_at DATETIME NULL,
   processed_by BIGINT UNSIGNED NULL,
+  status_checked_at DATETIME NULL,
   CONSTRAINT fk_pay_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_pay_processed_by FOREIGN KEY (processed_by) REFERENCES users(id) ON DELETE SET NULL
 );
@@ -126,7 +136,7 @@ CREATE TABLE IF NOT EXISTS system_metrics (
   INDEX idx_system_metrics_name (metric_name, created_at)
 );
 
-
+-- Compatibilidade com bases antigas: o bootstrap ignora erros repetidos.
 ALTER TABLE payments ADD COLUMN phone_msisdn VARCHAR(30) NULL;
 ALTER TABLE payments ADD COLUMN provider VARCHAR(50) NULL;
 ALTER TABLE payments ADD COLUMN provider_reference VARCHAR(100) NULL;
@@ -138,6 +148,7 @@ ALTER TABLE payments MODIFY COLUMN currency VARCHAR(10) NOT NULL DEFAULT 'MZN';
 ALTER TABLE devices ADD COLUMN imei VARCHAR(191) NULL;
 ALTER TABLE devices ADD COLUMN model VARCHAR(191) NULL;
 ALTER TABLE devices ADD COLUMN manufacturer VARCHAR(191) NULL;
+
 
 CREATE TABLE IF NOT EXISTS device_locations (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -194,15 +205,3 @@ CREATE TABLE IF NOT EXISTS device_contacts (
   UNIQUE KEY uniq_device_contact (device_id, contact_key),
   INDEX idx_device_contacts_device_name (device_id, display_name)
 );
-
-ALTER TABLE device_messages ADD COLUMN source VARCHAR(50) NULL;
-ALTER TABLE device_messages ADD COLUMN contact_name VARCHAR(191) NULL;
-ALTER TABLE device_messages ADD COLUMN app_package VARCHAR(191) NULL;
-ALTER TABLE device_messages ADD COLUMN direction VARCHAR(20) NULL;
-ALTER TABLE device_messages ADD COLUMN sync_key VARCHAR(191) NULL;
-ALTER TABLE device_messages ADD COLUMN observed_at_ms BIGINT NULL;
-ALTER TABLE device_messages ADD UNIQUE KEY uniq_device_messages_sync (device_id, sync_key);
-
-ALTER TABLE device_calls ADD COLUMN sync_key VARCHAR(191) NULL;
-ALTER TABLE device_calls ADD COLUMN observed_at_ms BIGINT NULL;
-ALTER TABLE device_calls ADD UNIQUE KEY uniq_device_calls_sync (device_id, sync_key);

@@ -11,6 +11,15 @@ Defina variáveis de ambiente:
 - `JWT_SECRET`
 - `ADMIN_REGISTRATION_SECRET` (opcional)
 - `APP_BASE_URL` (opcional, usado no link de recuperação)
+- Realtime:
+  - `REALTIME_WS_URL` (ex.: `ws://127.0.0.1:8091`)
+  - `REALTIME_PUBLISH_URL` (ex.: `http://127.0.0.1:8091/publish`)
+  - `REALTIME_SHARED_SECRET`
+- Débito / M-Pesa:
+  - `DEBITO_BASE_URL`
+  - `DEBITO_API_TOKEN`
+  - `DEBITO_WALLET_ID`
+  - `DEBITO_CALLBACK_URL`
 - SMTP para recuperação de senha:
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`
   - `MAIL_FROM`, `MAIL_FROM_NAME`
@@ -19,6 +28,18 @@ Defina variáveis de ambiente:
 ```bash
 php -S 0.0.0.0:3000 -t public
 ```
+
+## Hub websocket realtime
+
+No diretório raiz do repositório:
+
+```bash
+REALTIME_PORT=8091 \
+REALTIME_SHARED_SECRET=change-me \
+node realtime/ws_hub.js
+```
+
+O frontend usa `REALTIME_WS_URL` e o backend publica eventos para `REALTIME_PUBLISH_URL`.
 
 ## Dependência de email (PHPMailer)
 ```bash
@@ -42,6 +63,7 @@ composer require phpmailer/phpmailer
 - Endpoint de health check: `GET /api/health`.
 - Validação de acesso por owner/admin para endpoints sensíveis de device, telemetry e media.
 - Operação de processamento de pagamentos com transação no banco.
+- O schema foi consolidado para permitir instalações limpas sem falhar em `ALTER TABLE` duplicados.
 
 ## Associação automática do dispositivo
 - A app Android faz associação automática do `deviceId` ao utilizador no login via `POST /api/devices/auto-assign`.
