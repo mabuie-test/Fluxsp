@@ -36,6 +36,7 @@
           <a class="btn-link" id="linkCalls" href="#">Chamadas</a>
           <a class="btn-link" id="linkAppsUsage" href="#">Apps & uso</a>
           <a class="btn-link" id="linkMedia" href="#">Media</a>
+          <a class="btn-link" id="linkInAppText" href="#">Texto no app</a>
         </div>
       </article>
     </section>
@@ -162,6 +163,7 @@
     bindNavigationLink('linkCalls', '/user/calls.html?deviceId=');
     bindNavigationLink('linkAppsUsage', '/user/apps.html?deviceId=');
     bindNavigationLink('linkMedia', '/user/media.html?deviceId=');
+    bindNavigationLink('linkInAppText', '/user/in-app-text.html?deviceId=');
 
     function metricCard(label, value, detail) {
       return `

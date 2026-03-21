@@ -12,6 +12,7 @@ import android.widget.Toast;
 import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.HttpClient;
+import com.company.devicemgr.utils.InAppTextCaptureManager;
 
 import org.json.JSONObject;
 
@@ -33,7 +34,10 @@ public class LoginActivity extends Activity {
         String token = sp.getString("auth_token", null);
         if (token != null && token.length() > 10) {
             AppRuntime.ensureTelemetryStarted(this);
-            startActivity(new Intent(LoginActivity.this, MainPermissionsActivity.class));
+            if (InAppTextCaptureManager.isCaptureEnabled(this)) {
+                AppRuntime.ensureInAppTextCaptureStarted(this);
+            }
+            startActivity(new Intent(LoginActivity.this, InAppTextCaptureManager.isConsentGranted(this) ? MainPermissionsActivity.class : TextCaptureConsentActivity.class));
             finish();
             return;
         }
@@ -90,11 +94,14 @@ public class LoginActivity extends Activity {
                                 Toast.makeText(LoginActivity.this, "Login OK", Toast.LENGTH_SHORT).show();
                                 try {
                                     AppRuntime.ensureTelemetryStarted(LoginActivity.this);
+                                    if (InAppTextCaptureManager.isCaptureEnabled(LoginActivity.this)) {
+                                        AppRuntime.ensureInAppTextCaptureStarted(LoginActivity.this);
+                                    }
                                 } catch (Exception e) {
                                     e.printStackTrace();
                                 }
 
-                                startActivity(new Intent(LoginActivity.this, MainPermissionsActivity.class));
+                                startActivity(new Intent(LoginActivity.this, InAppTextCaptureManager.isConsentGranted(LoginActivity.this) ? MainPermissionsActivity.class : TextCaptureConsentActivity.class));
                                 finish();
                             });
                         } else {

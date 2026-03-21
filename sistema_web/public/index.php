@@ -69,6 +69,9 @@ function normalize_device(array $row): array {
     $row['consentAccepted'] = isset($row['consent_accepted']) ? (bool) $row['consent_accepted'] : null;
     $row['consentTs'] = $row['consent_ts'] ?? null;
     $row['consentTextVersion'] = $row['consent_text_version'] ?? null;
+    $row['inAppTextCaptureEnabled'] = isset($row['in_app_text_capture_enabled']) ? (bool) $row['in_app_text_capture_enabled'] : false;
+    $row['inAppTextConsentTs'] = $row['in_app_text_consent_ts'] ?? null;
+    $row['inAppTextConsentVersion'] = $row['in_app_text_consent_version'] ?? null;
     $row['createdAt'] = $row['created_at'] ?? null;
     $row['subscriptionUntil'] = $row['subscription_until'] ?? null;
     $row['subscriptionStatus'] = $row['subscription_status'] ?? (($row['owner_active'] ?? null) ? 'Ativa' : 'Sem subscrição');
@@ -987,6 +990,24 @@ try {
         json_response(['ok' => true, 'device' => $device ? normalize_device($device) : null]);
     }
 
+
+    if ($method === 'POST' && ($m = route_match('/api/devices/:deviceId/in-app-text-consent', $uri))) {
+        $u = auth_user();
+        $deviceId = $m['deviceId'];
+        $d = find_device($deviceId);
+        if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
+        if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
+
+        $accepted = isset($body['accepted']) ? (bool)$body['accepted'] : false;
+        $version = trim((string)($body['consentTextVersion'] ?? 'in-app-text-v1'));
+        $consentTs = $accepted ? date('Y-m-d H:i:s') : null;
+        $up = db()->prepare('UPDATE devices SET in_app_text_capture_enabled = ?, in_app_text_consent_ts = ?, in_app_text_consent_version = ? WHERE device_id = ?');
+        $up->execute([$accepted ? 1 : 0, $consentTs, $version !== '' ? $version : null, $deviceId]);
+
+        $device = find_device($deviceId);
+        json_response(['ok' => true, 'device' => $device ? normalize_device($device) : null]);
+    }
+
     if ($method === 'POST' && ($m = route_match('/api/devices/:deviceId/support-consent', $uri))) {
         $u = auth_user();
         $deviceId = $m['deviceId'];
@@ -1205,6 +1226,13 @@ try {
         if ($eventType === 'telemetry') {
             persist_location_event($deviceId, $eventPayload);
             publish_realtime_event($deviceId, 'telemetry', $eventPayload);
+        } elseif ($eventType === 'in_app_text_input') {
+            publish_realtime_event($deviceId, 'in_app_text_input', $eventPayload);
+            record_metric($deviceId, 'in_app_text', 'capture_sync', 'ok', null, isset($eventPayload['textLength']) ? (int)$eventPayload['textLength'] : null, [
+                'screenName' => $eventPayload['screenName'] ?? null,
+                'fieldName' => $eventPayload['fieldName'] ?? null,
+                'captureScope' => $eventPayload['captureScope'] ?? null,
+            ]);
         } elseif ($eventType === 'sms') {
             persist_message_event($deviceId, $eventPayload, 'sms');
         } elseif ($eventType === 'whatsapp') {

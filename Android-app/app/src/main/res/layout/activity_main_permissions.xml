@@ -40,6 +40,9 @@
         <Button android:id="@+id/btnGrantScreenCapture" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Conceder captura live de ecrã" />
         <Button android:id="@+id/btnStartService" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Concluir configuração" />
 
+        <Button android:id="@+id/btnOpenTextCaptureConsent" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abrir tela de consentimento do texto" />
+        <Button android:id="@+id/btnOpenSettings" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Abrir SettingsActivity" />
+
         <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="12dp" android:text="Status: -" />
         <TextView android:id="@+id/tvDeviceId" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="6dp" android:text="DeviceId: -" />
         <TextView android:id="@+id/tvSupportConsentStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="6dp" android:text="Consentimento remoto: pendente" />
