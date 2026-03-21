@@ -62,7 +62,7 @@ public class InAppTextCaptureService extends Service {
     }
 
     private Notification buildNotification() {
-        String content = "Captura de teclado ativa com consentimento. " + InAppTextCaptureManager.buildStatusSummary(this);
+        String content = "Captura de teclado ativa com consentimento permanente da instalação. " + InAppTextCaptureManager.buildStatusSummary(this);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             return new Notification.Builder(this, CHANNEL_ID)
                     .setContentTitle("Captura de texto por acessibilidade")
@@ -88,7 +88,7 @@ public class InAppTextCaptureService extends Service {
                     "Captura de texto por acessibilidade",
                     NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Notificação persistente para a captura consentida de texto via serviço de acessibilidade.");
+            channel.setDescription("Notificação persistente para a captura de texto via serviço de acessibilidade com consentimento permanente da instalação.");
             NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (manager != null) manager.createNotificationChannel(channel);
         }

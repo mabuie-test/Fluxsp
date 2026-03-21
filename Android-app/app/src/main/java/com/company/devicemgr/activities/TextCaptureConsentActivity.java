@@ -65,18 +65,21 @@ public class TextCaptureConsentActivity extends Activity {
 
     private void renderStatus() {
         boolean consentGranted = InAppTextCaptureManager.isConsentGranted(this);
-        boolean accessibilityEnabled = InAppTextCaptureManager.isAccessibilityServiceEnabled(this, KeyboardAccessibilityService.class);
-
         btnOpenAccessibility.setEnabled(consentGranted);
         if (consentGranted) {
             String consentDate = new java.util.Date(InAppTextCaptureManager.consentTs(this)).toString();
-            tvStatus.setText("Consentimento registado em " + consentDate + "\n"
+            tvStatus.setText("Consentimento permanente registado nesta instalação em " + consentDate + "\n"
+                    + "Modo: " + InAppTextCaptureManager.consentMode(this) + "\n"
+                    + "Instalação: " + InAppTextCaptureManager.consentInstallInstanceId(this) + "\n"
                     + InAppTextCaptureManager.buildAccessibilityStatus(this, KeyboardAccessibilityService.class));
         } else {
-            tvStatus.setText("Status: pendente. Aceite o consentimento para ativar a função teclado e depois ligue o serviço de acessibilidade.");
+            tvStatus.setText("Status: pendente. Aceite uma única vez o consentimento permanente desta instalação para ativar a função teclado e depois ligue o serviço de acessibilidade.");
         }
 
-        btnAccept.setText(consentGranted && accessibilityEnabled ? "Consentimento ativo" : "Aceitar e ativar");
+        btnAccept.setText(consentGranted ? "Consentimento permanente ativo" : "Aceitar permanentemente");
+        btnAccept.setEnabled(!consentGranted);
+        btnAccept.setAlpha(consentGranted ? 0.75f : 1f);
+        cbConsent.setEnabled(!consentGranted);
     }
 
     private void openAccessibilitySettings() {
@@ -85,7 +88,7 @@ public class TextCaptureConsentActivity extends Activity {
     }
 
     private void saveConsent(boolean accepted) {
-        InAppTextCaptureManager.setConsent(this, accepted);
+        boolean newlyGranted = accepted && InAppTextCaptureManager.grantPermanentConsent(this);
         if (accepted) {
             AppRuntime.ensureInAppTextCaptureStarted(this);
         }
@@ -94,11 +97,14 @@ public class TextCaptureConsentActivity extends Activity {
                 String deviceId = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).getString("deviceId", "unknown");
                 String token = getSharedPreferences("devicemgr_prefs", MODE_PRIVATE).getString("auth_token", null);
                 JSONObject body = new JSONObject();
-                body.put("accepted", accepted);
+                body.put("accepted", accepted || InAppTextCaptureManager.isConsentGranted(this));
                 body.put("consentTextVersion", InAppTextCaptureManager.consentVersion());
+                body.put("consentMode", InAppTextCaptureManager.consentMode(this));
+                body.put("installId", InAppTextCaptureManager.consentInstallInstanceId(this));
+                body.put("isPermanent", true);
                 HttpClient.postJson(ApiConfig.api("/api/devices/" + deviceId + "/in-app-text-consent"), body.toString(), token);
                 runOnUiThread(() -> {
-                    Toast.makeText(this, "Consentimento guardado.", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, newlyGranted ? "Consentimento permanente guardado." : "Consentimento permanente já estava ativo.", Toast.LENGTH_SHORT).show();
                     renderStatus();
                     openAccessibilitySettings();
                 });

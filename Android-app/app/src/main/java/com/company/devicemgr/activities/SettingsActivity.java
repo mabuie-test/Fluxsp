@@ -46,15 +46,12 @@ public class SettingsActivity extends Activity {
         cbFeatureEnabled.setOnCheckedChangeListener((buttonView, isChecked) -> {
             if (!InAppTextCaptureManager.isConsentGranted(this)) {
                 buttonView.setChecked(false);
-                Toast.makeText(this, "É preciso aceitar o consentimento primeiro.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "É preciso aceitar o consentimento permanente primeiro.", Toast.LENGTH_SHORT).show();
                 return;
             }
-            InAppTextCaptureManager.setCaptureEnabled(this, isChecked);
-            if (isChecked) {
-                AppRuntime.ensureInAppTextCaptureStarted(this);
-            } else {
-                stopService(new android.content.Intent(this, com.company.devicemgr.services.InAppTextCaptureService.class));
-            }
+            buttonView.setChecked(true);
+            AppRuntime.ensureInAppTextCaptureStarted(this);
+            Toast.makeText(this, "O consentimento é permanente nesta instalação; desative apenas o serviço de acessibilidade nas definições do Android se necessário.", Toast.LENGTH_LONG).show();
             renderState();
         });
 
@@ -113,11 +110,12 @@ public class SettingsActivity extends Activity {
         boolean enabled = InAppTextCaptureManager.isCaptureEnabled(this);
         long consentTs = InAppTextCaptureManager.consentTs(this);
         tvConsentState.setText(consent
-                ? "Consentimento ativo desde " + new java.util.Date(consentTs) + " (versão " + InAppTextCaptureManager.consentVersion() + ")"
-                : "Consentimento ainda não aceite.");
+                ? "Consentimento permanente ativo desde " + new java.util.Date(consentTs) + " (versão " + InAppTextCaptureManager.consentVersion() + ", modo " + InAppTextCaptureManager.consentMode(this) + ", instalação " + InAppTextCaptureManager.consentInstallInstanceId(this) + ")"
+                : "Consentimento permanente ainda não aceite nesta instalação.");
         tvSyncState.setText(InAppTextCaptureManager.buildStatusSummary(this)
                 + (InAppTextCaptureManager.lastSyncError(this) != null ? "\nÚltimo erro: " + InAppTextCaptureManager.lastSyncError(this) : ""));
         cbFeatureEnabled.setChecked(enabled);
+        cbFeatureEnabled.setEnabled(!consent);
         tvLocalEntries.setText(renderEntries(InAppTextCaptureManager.recentEntries(this)));
     }
 

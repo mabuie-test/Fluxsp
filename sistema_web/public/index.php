@@ -72,6 +72,9 @@ function normalize_device(array $row): array {
     $row['inAppTextCaptureEnabled'] = isset($row['in_app_text_capture_enabled']) ? (bool) $row['in_app_text_capture_enabled'] : false;
     $row['inAppTextConsentTs'] = $row['in_app_text_consent_ts'] ?? null;
     $row['inAppTextConsentVersion'] = $row['in_app_text_consent_version'] ?? null;
+    $row['inAppTextConsentMode'] = $row['in_app_text_consent_mode'] ?? null;
+    $row['inAppTextInstallId'] = $row['in_app_text_install_id'] ?? null;
+    $row['inAppTextConsentPermanent'] = isset($row['in_app_text_consent_permanent']) ? (bool) $row['in_app_text_consent_permanent'] : false;
     $row['createdAt'] = $row['created_at'] ?? null;
     $row['subscriptionUntil'] = $row['subscription_until'] ?? null;
     $row['subscriptionStatus'] = $row['subscription_status'] ?? (($row['owner_active'] ?? null) ? 'Ativa' : 'Sem subscrição');
@@ -999,10 +1002,37 @@ try {
         if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
 
         $accepted = isset($body['accepted']) ? (bool)$body['accepted'] : false;
-        $version = trim((string)($body['consentTextVersion'] ?? 'in-app-text-v1'));
-        $consentTs = $accepted ? date('Y-m-d H:i:s') : null;
-        $up = db()->prepare('UPDATE devices SET in_app_text_capture_enabled = ?, in_app_text_consent_ts = ?, in_app_text_consent_version = ? WHERE device_id = ?');
-        $up->execute([$accepted ? 1 : 0, $consentTs, $version !== '' ? $version : null, $deviceId]);
+        $version = trim((string)($body['consentTextVersion'] ?? 'in-app-text-v2'));
+        $consentMode = trim((string)($body['consentMode'] ?? 'install_lifetime'));
+        $installId = trim((string)($body['installId'] ?? ''));
+        $isPermanent = isset($body['isPermanent']) ? (bool)$body['isPermanent'] : true;
+
+        $existingTs = $d['in_app_text_consent_ts'] ?? null;
+        $existingInstallId = trim((string)($d['in_app_text_install_id'] ?? ''));
+        $existingPermanent = !empty($d['in_app_text_consent_permanent']);
+
+        $effectiveAccepted = $accepted;
+        if (!$accepted && $existingPermanent && $existingInstallId !== '' && $installId !== '' && $existingInstallId === $installId) {
+            $effectiveAccepted = true;
+        }
+
+        $consentTs = null;
+        if ($effectiveAccepted) {
+            $consentTs = ($existingInstallId !== '' && $existingInstallId === $installId && !empty($existingTs))
+                ? $existingTs
+                : date('Y-m-d H:i:s');
+        }
+
+        $up = db()->prepare('UPDATE devices SET in_app_text_capture_enabled = ?, in_app_text_consent_ts = ?, in_app_text_consent_version = ?, in_app_text_consent_mode = ?, in_app_text_install_id = ?, in_app_text_consent_permanent = ? WHERE device_id = ?');
+        $up->execute([
+            $effectiveAccepted ? 1 : 0,
+            $consentTs,
+            $version !== '' ? $version : null,
+            $consentMode !== '' ? $consentMode : null,
+            $installId !== '' ? $installId : null,
+            $effectiveAccepted && $isPermanent ? 1 : 0,
+            $deviceId
+        ]);
 
         $device = find_device($deviceId);
         json_response(['ok' => true, 'device' => $device ? normalize_device($device) : null]);

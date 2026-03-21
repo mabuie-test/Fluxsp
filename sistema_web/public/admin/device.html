@@ -103,6 +103,7 @@
                       <strong>Last seen:</strong> ${d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-'} <br>
                       <strong>Online:</strong> ${d.isOnline ? 'Sim' : 'Não'} <br>
                       <strong>Consentimento remoto:</strong> ${d.consentAccepted ? 'OK' : 'Pendente'} <br>
+                      <strong>Consentimento teclado:</strong> ${d.inAppTextConsentPermanent ? 'Permanente nesta instalação' : 'Pendente'} <br>
                       <strong>Pronto para suporte:</strong> ${d.supportReady ? 'Sim' : 'Não'}`;
     }
 

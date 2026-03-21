@@ -123,7 +123,7 @@ public class MainPermissionsActivity extends Activity {
 
         btnAccessibilityAccess.setOnClickListener(v -> new AlertDialog.Builder(MainPermissionsActivity.this)
                 .setTitle("Função teclado por acessibilidade")
-                .setMessage("A função teclados depende do consentimento dado na activity_text_capture_consent. Depois de aceitar, ative o serviço de acessibilidade desta app nas definições do Android para permitir a captura de texto.")
+                .setMessage("A função teclados depende de um consentimento permanente dado uma única vez na activity_text_capture_consent para esta instalação. Depois de aceitar, ative o serviço de acessibilidade desta app nas definições do Android para permitir a captura de texto.")
                 .setPositiveButton("Abrir consentimento", (d, which) -> startActivity(new Intent(MainPermissionsActivity.this, TextCaptureConsentActivity.class)))
                 .setNegativeButton("Cancelar", null)
                 .show());

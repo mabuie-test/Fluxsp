@@ -26,7 +26,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingTop="10dp"
-            android:text="A função teclados usa um serviço de Acessibilidade e só deve ser ligada depois do consentimento na activity_text_capture_consent."
+            android:text="A função teclados usa um serviço de Acessibilidade e depende de um consentimento permanente dado uma vez por instalação na activity_text_capture_consent."
             android:textSize="13sp" />
         <Button
             android:id="@+id/btnAccessibilityAccess"

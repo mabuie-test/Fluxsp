@@ -111,8 +111,9 @@
                       <strong>Online:</strong> ${d.isOnline ? 'Sim' : 'Não'} <br>
                       <strong>Consentimento remoto:</strong> ${d.consentAccepted ? 'OK' : 'Pendente'} <br>
                       <strong>Teclado:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo' : 'Desativado'} <br>
+                      <strong>Consentimento teclado:</strong> ${d.inAppTextConsentPermanent ? 'Permanente nesta instalação' : 'Pendente'} <br>
                       <strong>Pronto para suporte:</strong> ${d.supportReady ? 'Sim' : 'Não'}`;
-      document.getElementById('textCaptureSummary').innerHTML = `<strong>Status:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo com consentimento' : 'Desativado'}<br><strong>Versão:</strong> ${d.inAppTextConsentVersion || '-'}<br><strong>Aceite em:</strong> ${d.inAppTextConsentTs ? new Date(d.inAppTextConsentTs).toLocaleString() : '-'}`;
+      document.getElementById('textCaptureSummary').innerHTML = `<strong>Status:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo com consentimento permanente' : 'Desativado'}<br><strong>Modo:</strong> ${d.inAppTextConsentMode || '-'}<br><strong>Instalação:</strong> ${d.inAppTextInstallId || '-'}<br><strong>Versão:</strong> ${d.inAppTextConsentVersion || '-'}<br><strong>Aceite em:</strong> ${d.inAppTextConsentTs ? new Date(d.inAppTextConsentTs).toLocaleString() : '-'}`;
     }
 
     async function loadHistory(){
