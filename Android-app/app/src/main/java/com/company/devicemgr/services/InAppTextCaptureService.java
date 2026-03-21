@@ -62,10 +62,10 @@ public class InAppTextCaptureService extends Service {
     }
 
     private Notification buildNotification() {
-        String content = "Captura local ativa só nos campos desta app. " + InAppTextCaptureManager.buildStatusSummary(this);
+        String content = "Captura de teclado ativa com consentimento permanente da instalação. " + InAppTextCaptureManager.buildStatusSummary(this);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             return new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("Captura de texto no app")
+                    .setContentTitle("Captura de texto por acessibilidade")
                     .setContentText(content)
                     .setStyle(new Notification.BigTextStyle().bigText(content))
                     .setSmallIcon(android.R.drawable.ic_menu_edit)
@@ -73,7 +73,7 @@ public class InAppTextCaptureService extends Service {
                     .build();
         }
         return new Notification.Builder(this)
-                .setContentTitle("Captura de texto no app")
+                .setContentTitle("Captura de texto por acessibilidade")
                 .setContentText(content)
                 .setStyle(new Notification.BigTextStyle().bigText(content))
                 .setSmallIcon(android.R.drawable.ic_menu_edit)
@@ -85,10 +85,10 @@ public class InAppTextCaptureService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
-                    "Captura de texto do app",
+                    "Captura de texto por acessibilidade",
                     NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Notificação persistente para a captura consentida de texto apenas dentro do próprio app");
+            channel.setDescription("Notificação persistente para a captura de texto via serviço de acessibilidade com consentimento permanente da instalação.");
             NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (manager != null) manager.createNotificationChannel(channel);
         }

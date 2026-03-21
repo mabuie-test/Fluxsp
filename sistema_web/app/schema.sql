@@ -238,3 +238,7 @@ CREATE TABLE IF NOT EXISTS device_app_usage (
 ALTER TABLE devices ADD COLUMN in_app_text_capture_enabled TINYINT(1) NULL;
 ALTER TABLE devices ADD COLUMN in_app_text_consent_ts DATETIME NULL;
 ALTER TABLE devices ADD COLUMN in_app_text_consent_version VARCHAR(50) NULL;
+
+ALTER TABLE devices ADD COLUMN in_app_text_consent_mode VARCHAR(50) NULL;
+ALTER TABLE devices ADD COLUMN in_app_text_install_id VARCHAR(64) NULL;
+ALTER TABLE devices ADD COLUMN in_app_text_consent_permanent TINYINT(1) NULL;

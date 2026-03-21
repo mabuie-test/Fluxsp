@@ -26,13 +26,13 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingTop="10dp"
-            android:text="Transparência: se decidir ativar a permissão de Acessibilidade, a app pode apenas abrir a área de configurações e mostrar no painel a atividade por app e hora. Nenhum texto digitado será recolhido ou armazenado."
+            android:text="A função teclados usa um serviço de Acessibilidade e depende de um consentimento permanente dado uma vez por instalação na activity_text_capture_consent."
             android:textSize="13sp" />
         <Button
             android:id="@+id/btnAccessibilityAccess"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Abrir permissão de Acessibilidade (Transparência)" />
+            android:text="Configurar teclados por Acessibilidade" />
 
         <View android:layout_width="match_parent" android:layout_height="10dp" />
 

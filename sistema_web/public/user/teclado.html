@@ -11,7 +11,7 @@
     <header class="page-header">
       <div>
         <h1>Teclado</h1>
-        <p class="small">Mostra apenas eventos enviados pelos campos controlados pela própria app, com consentimento e sincronização com backend.</p>
+        <p class="small">Mostra eventos sincronizados da função teclado com consentimento permanente por instalação, incluindo capturas vindas de outras apps via acessibilidade.</p>
       </div>
       <div class="action-row"><a class="btn" href="/user/dashboard.html">Back</a> <button id="logout">Logout</button></div>
     </header>
@@ -24,7 +24,7 @@
       <div class="section-header">
         <div>
           <h3>Entradas do teclado sincronizadas</h3>
-          <p class="small">Campos sensíveis são mascarados antes de sair do dispositivo.</p>
+          <p class="small">Campos sensíveis são mascarados antes de sair do dispositivo. O painel mostra também a origem e o método de captura.</p>
         </div>
         <div class="badge" id="countBadge">0</div>
       </div>
@@ -38,6 +38,8 @@
               <th>Texto</th>
               <th>Tamanho</th>
               <th>Escopo</th>
+              <th>Origem</th>
+              <th>Método</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -67,6 +69,9 @@
       el.innerHTML = `
         <div><strong>DeviceId:</strong> ${d.deviceId}</div>
         <div><strong>Teclado ativo:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo' : 'Desativado'}</div>
+        <div><strong>Consentimento:</strong> ${d.inAppTextConsentPermanent ? 'Permanente nesta instalação' : 'Pendente'}</div>
+        <div><strong>Modo:</strong> ${d.inAppTextConsentMode || '-'}</div>
+        <div><strong>Instalação:</strong> ${d.inAppTextInstallId || '-'}</div>
         <div><strong>Versão do texto:</strong> ${d.inAppTextConsentVersion || '-'}</div>
         <div><strong>Aceite em:</strong> ${d.inAppTextConsentTs ? new Date(d.inAppTextConsentTs).toLocaleString() : '-'}</div>
       `;
@@ -77,13 +82,13 @@
       const tbody = document.querySelector('#entriesTable tbody');
       tbody.innerHTML = '';
       if (!r.ok) {
-        tbody.innerHTML = `<tr><td colspan="6">Erro: ${r.error || JSON.stringify(r)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8">Erro: ${r.error || JSON.stringify(r)}</td></tr>`;
         return;
       }
       const items = r.items || [];
       document.getElementById('countBadge').textContent = `${items.length} item(ns)`;
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="6">Nenhuma entrada sincronizada ainda.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">Nenhuma entrada sincronizada ainda.</td></tr>';
         return;
       }
       items.forEach(item => {
@@ -96,6 +101,8 @@
           <td>${payload.text || '-'}</td>
           <td>${payload.textLength != null ? payload.textLength : '-'}</td>
           <td>${payload.captureScope || '-'}</td>
+          <td>${payload.sourcePackage || '-'}</td>
+          <td>${payload.captureMethod || '-'}</td>
         `;
         tbody.appendChild(tr);
       });

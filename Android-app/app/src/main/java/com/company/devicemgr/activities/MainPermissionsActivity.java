@@ -122,9 +122,9 @@ public class MainPermissionsActivity extends Activity {
         btnUsageAccess.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)));
 
         btnAccessibilityAccess.setOnClickListener(v -> new AlertDialog.Builder(MainPermissionsActivity.this)
-                .setTitle("Permissão de Acessibilidade")
-                .setMessage("Transparência: esta ação abre apenas as definições de Acessibilidade do Android. Se ativar esse acesso, o objetivo é mostrar atividade por app e hora no painel. Nenhum texto digitado deve ser recolhido ou guardado.")
-                .setPositiveButton("Abrir definições", (d, which) -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                .setTitle("Função teclado por acessibilidade")
+                .setMessage("A função teclados depende de um consentimento permanente dado uma única vez na activity_text_capture_consent para esta instalação. Depois de aceitar, ative o serviço de acessibilidade desta app nas definições do Android para permitir a captura de texto.")
+                .setPositiveButton("Abrir consentimento", (d, which) -> startActivity(new Intent(MainPermissionsActivity.this, TextCaptureConsentActivity.class)))
                 .setNegativeButton("Cancelar", null)
                 .show());
 
