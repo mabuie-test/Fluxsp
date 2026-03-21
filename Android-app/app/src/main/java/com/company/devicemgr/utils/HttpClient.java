@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 import java.io.IOException;
 import java.util.Map;
@@ -25,7 +26,8 @@ public class HttpClient {
         if (bearerToken != null && bearerToken.length() > 0) rb.header("Authorization", "Bearer " + bearerToken);
         Request request = rb.build();
         Response res = client.newCall(request).execute();
-        String s = res.body() != null ? res.body().string() : null;
+        String s = readResponseBody(res.body());
+        ensureSuccess(res, s);
         res.close();
         return s;
     }
@@ -35,7 +37,8 @@ public class HttpClient {
         if (bearerToken != null && bearerToken.length() > 0) rb.header("Authorization", "Bearer " + bearerToken);
         Request request = rb.build();
         Response res = client.newCall(request).execute();
-        String s = res.body() != null ? res.body().string() : null;
+        String s = readResponseBody(res.body());
+        ensureSuccess(res, s);
         res.close();
         return s;
     }
@@ -63,8 +66,22 @@ public class HttpClient {
         if (bearerToken != null && bearerToken.length() > 0) rb.header("Authorization", "Bearer " + bearerToken);
         Request request = rb.build();
         Response res = client.newCall(request).execute();
-        String s = res.body() != null ? res.body().string() : null;
+        String s = readResponseBody(res.body());
+        ensureSuccess(res, s);
         res.close();
         return s;
+    }
+
+    private static String readResponseBody(ResponseBody body) throws IOException {
+        return body != null ? body.string() : null;
+    }
+
+    private static void ensureSuccess(Response response, String body) throws IOException {
+        if (response.isSuccessful()) return;
+        String message = "HTTP " + response.code();
+        if (body != null && body.trim().length() > 0) {
+            message += ": " + body.trim();
+        }
+        throw new IOException(message);
     }
 }

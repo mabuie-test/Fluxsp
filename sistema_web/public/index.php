@@ -1045,8 +1045,20 @@ try {
 
     // Telemetry
     if ($method === 'POST' && ($m = route_match('/api/telemetry/:deviceId', $uri))) {
+        $u = auth_user();
         $deviceId = $m['deviceId'];
         if ($deviceId === '') json_response(['ok' => false, 'error' => 'missing_device'], 400);
+        $d = find_device($deviceId);
+        if ($d) {
+            if (empty($d['owner_user_id'])) {
+                $claim = db()->prepare('UPDATE devices SET owner_user_id = COALESCE(owner_user_id, ?), last_seen = ? WHERE device_id = ?');
+                $claim->execute([$u['id'], date('Y-m-d H:i:s'), $deviceId]);
+                $d = find_device($deviceId);
+            }
+            if ($d && !can_access_device($u, $d)) {
+                json_response(['ok' => false, 'error' => 'forbidden'], 403);
+            }
+        }
 
         $payload = $body;
         $ts = date('Y-m-d H:i:s');
@@ -1067,8 +1079,8 @@ try {
             );
         }
 
-        $up = db()->prepare('INSERT INTO devices(device_id, last_seen) VALUES(?,?) ON DUPLICATE KEY UPDATE last_seen=VALUES(last_seen)');
-        $up->execute([$deviceId, $ts]);
+        $up = db()->prepare('INSERT INTO devices(device_id, owner_user_id, last_seen) VALUES(?,?,?) ON DUPLICATE KEY UPDATE owner_user_id = COALESCE(owner_user_id, VALUES(owner_user_id)), last_seen = VALUES(last_seen)');
+        $up->execute([$deviceId, $u['id'], $ts]);
         persist_device_snapshot($deviceId, $eventPayload);
 
         if ($eventType === 'telemetry') {
