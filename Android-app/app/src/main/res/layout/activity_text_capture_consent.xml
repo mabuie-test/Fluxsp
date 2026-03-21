@@ -20,7 +20,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Esta função teclado guarda o texto digitado em campos desta app e todas outras que estão no celular. usa Acessibilidade, lê outros apps e tenta capturar teclados externos ou conteúdo fora da interface do app."
+            android:text="Esta função teclado captura o texto digitado em campos desta app e de outras apps do dispositivo após o seu consentimento. Para funcionar, precisa que o serviço de Acessibilidade desta app seja ativado nas definições do Android."
             android:textSize="15sp" />
 
         <TextView
@@ -35,7 +35,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="Li e autorizo a captura consentida apenas dos campos das minhas app." />
+            android:text="Li e autorizo a captura de texto via serviço de acessibilidade desta app." />
 
         <Button
             android:id="@+id/btnAcceptTextCaptureConsent"
@@ -43,6 +43,13 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="Aceitar e ativar" />
+
+        <Button
+            android:id="@+id/btnOpenAccessibilitySettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Abrir serviços de acessibilidade" />
 
         <Button
             android:id="@+id/btnSkipTextCaptureConsent"

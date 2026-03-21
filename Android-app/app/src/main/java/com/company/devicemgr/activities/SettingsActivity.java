@@ -123,7 +123,7 @@ public class SettingsActivity extends Activity {
 
     private String renderEntries(JSONArray entries) {
         if (entries == null || entries.length() == 0) {
-            return "Sem registos locais ainda. Digite nos campos abaixo para testar a captura dentro da própria app.";
+            return "Sem registos locais ainda. Ative a acessibilidade e digite em qualquer app para testar a função teclado.";
         }
         StringBuilder sb = new StringBuilder();
         int max = Math.min(6, entries.length());

