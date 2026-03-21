@@ -82,25 +82,6 @@
     <section class="card">
       <div class="section-header">
         <div>
-          <h3>Pagamento mensal via M-Pesa</h3>
-          <p class="small">Pagamento mensal fixo de 800 MZN via Débito C2B M-Pesa. O valor não é editável e, assim que a transação for confirmada, a conta fica ativa.</p>
-        </div>
-      </div>
-      <div class="form-grid">
-        <input id="mpesaMsisdn" placeholder="MSISDN (ex.: 855827001)" />
-        <input id="mpesaAmount" type="text" value="800 MZN / mensal" readonly />
-        <input id="mpesaReference" placeholder="Descrição da referência" value="Pagamento mensal 800 MZN" />
-        <input id="mpesaNote" placeholder="Nota interna (opcional)" />
-      </div>
-      <div class="action-row">
-        <button id="sendMpesaPayment">Pagar com M-Pesa</button>
-      </div>
-      <p id="payMsg" class="small"></p>
-    </section>
-
-    <section class="card">
-      <div class="section-header">
-        <div>
           <h3>Meus pagamentos M-Pesa</h3>
           <p class="small">Use “Atualizar estado” para consultar a referência Debito e sincronizar o estado local com o provedor.</p>
         </div>
@@ -175,6 +156,12 @@
       `;
     }
 
+    function formatProfileDate(value) {
+      if (!value) return '—';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+    }
+
     async function loadProfile() {
       const r = await apiFetch('/api/auth/me', { method:'GET' });
       const el = document.getElementById('profileHtml');
@@ -182,13 +169,19 @@
         el.innerHTML = `<div class="small">Erro: ${r.error || JSON.stringify(r)}</div>`;
         return;
       }
-      const user = r.user;
+      const user = r.user || {};
+      const accountActive = !!(user.subscriptionActive ?? user.active);
+      const paymentCta = !accountActive
+        ? `<a class="btn-link" href="/user/payment.html">Pagar com M-Pesa</a>`
+        : '';
       el.innerHTML = `
         <div><strong>Nome:</strong> ${user.name || '-'}</div>
         <div><strong>Email:</strong> ${user.email || '-'}</div>
         <div><strong>Perfil:</strong> ${user.role || '-'}</div>
-        <div><strong>Conta ativa:</strong> ${user.active ? 'Sim' : 'Não'}</div>
-        ${!user.active ? '<div class="inline-alert">Conta não ativa. Regularize o pagamento mensal por M-Pesa para ver dados protegidos.</div>' : ''}
+        <div><strong>Conta ativa:</strong> ${accountActive ? 'Sim' : 'Não'} ${paymentCta}</div>
+        <div><strong>Data de activação:</strong> ${formatProfileDate(user.activated_at || user.activatedAt)}</div>
+        <div><strong>Expira em:</strong> ${formatProfileDate(user.expires_at || user.expiresAt)}</div>
+        ${!accountActive ? '<div class="inline-alert">Conta não ativa ou expirada. Regularize o pagamento mensal por M-Pesa para voltar a ver dados protegidos.</div>' : ''}
       `;
     }
 
@@ -326,27 +319,6 @@
         b.addEventListener('click', () => refreshPaymentStatus(b.getAttribute('data-id')));
       });
     }
-
-    document.getElementById('sendMpesaPayment').addEventListener('click', async () => {
-      const msisdn = document.getElementById('mpesaMsisdn').value.trim();
-      const referenceDescription = document.getElementById('mpesaReference').value.trim();
-      const note = document.getElementById('mpesaNote').value.trim();
-      const msgEl = document.getElementById('payMsg');
-      if (!msisdn || !referenceDescription) {
-        msgEl.textContent = 'Preencha MSISDN e descrição.';
-        return;
-      }
-      msgEl.textContent = 'A iniciar pedido M-Pesa...';
-      const res = await apiFetch('/api/payments/mpesa/initiate', { method:'POST', body: { msisdn, referenceDescription, note } });
-      if (!res.ok) {
-        msgEl.textContent = 'Erro ao iniciar M-Pesa: ' + (res.error || JSON.stringify(res.provider || res));
-        return;
-      }
-      const payment = res.payment || {};
-      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}.`;
-      await loadProfile();
-      await loadMyPayments();
-    });
 
     (async function(){
       await loadProfile();

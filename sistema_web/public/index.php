@@ -944,11 +944,34 @@ try {
 
     if ($method === 'GET' && $uri === '/api/auth/me') {
         $user = auth_user();
-        $st = db()->prepare('SELECT id, email, name, role, active, created_at FROM users WHERE id = ? LIMIT 1');
+        $st = db()->prepare("SELECT u.id, u.email, u.name, u.role, u.active, u.created_at,
+                latest.latest_payment_at AS activated_at,
+                CASE
+                    WHEN latest.latest_payment_at IS NULL THEN NULL
+                    ELSE DATE_ADD(latest.latest_payment_at, INTERVAL 30 DAY)
+                END AS expires_at,
+                CASE
+                    WHEN u.role = 'admin' THEN u.active
+                    WHEN latest.latest_payment_at IS NULL THEN 0
+                    WHEN DATE_ADD(latest.latest_payment_at, INTERVAL 30 DAY) >= NOW() THEN 1
+                    ELSE 0
+                END AS subscription_active
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, MAX(COALESCE(processed_at, created_at)) AS latest_payment_at
+                FROM payments
+                WHERE status = 'completed'
+                GROUP BY user_id
+            ) latest ON latest.user_id = u.id
+            WHERE u.id = ?
+            LIMIT 1");
         $st->execute([$user['id']]);
         $u = $st->fetch();
         if (!$u) json_response(['ok' => false, 'error' => 'not_found'], 404);
-        $u['active'] = (bool) $u['active'];
+        $u['accountActiveFlag'] = (bool) $u['active'];
+        $u['subscriptionActive'] = (bool) ($u['subscription_active'] ?? false);
+        $u['active'] = $u['subscriptionActive'];
+        unset($u['subscription_active']);
         json_response(['ok' => true, 'user' => $u]);
     }
 
