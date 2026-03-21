@@ -5,7 +5,7 @@ Suite completa com:
 - app Android para recolha de telemetria, sessões remotas, captura live e upload de media;
 - backend PHP/MySQL para autenticação, pagamentos, media, observabilidade e controlo de sessões;
 - frontend web para administração e gestão por utilizador;
-- realtime interno em PHP/SSE dentro de `sistema_web`, compatível com hosting compartilhado.
+- realtime interno em PHP/SSE dentro de `sistema_web`, compatível com hospedagem compartilhada com PHP 7+.
 
 ## Estrutura
 
@@ -33,6 +33,13 @@ Backend PHP:
 - `REALTIME_STREAM_TTL` — validade do token curto usado pelo EventSource
 - `REALTIME_STREAM_MAX_DURATION` — duração máxima de cada ligação SSE antes de reconexão
 - `DEBITO_BASE_URL`, `DEBITO_API_TOKEN`, `DEBITO_WALLET_ID`, `DEBITO_CALLBACK_URL`
+
+### 2.1) Hospedagem compartilhada (PHP 7+)
+
+- Publique apenas a pasta `sistema_web/` no servidor PHP.
+- A raiz pública do domínio/subdomínio deve apontar para `sistema_web/public/`.
+- O realtime já está embutido no próprio backend PHP usando SSE; não é necessário Node.js, websocket separado nem processo residente extra.
+- Mantenha o `.htaccess` de `sistema_web/public/` para que as rotas `/api/*` continuem a ser encaminhadas para `index.php`.
 
 ### 3) Android
 
