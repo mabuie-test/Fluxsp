@@ -203,6 +203,48 @@ CREATE TABLE IF NOT EXISTS device_calls (
   INDEX idx_device_calls_device_time (device_id, observed_at)
 );
 
+CREATE TABLE IF NOT EXISTS device_notifications (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  package_name VARCHAR(191) NULL,
+  title VARCHAR(255) NULL,
+  body TEXT NULL,
+  sub_text TEXT NULL,
+  conversation_title VARCHAR(255) NULL,
+  self_display_name VARCHAR(255) NULL,
+  sync_key VARCHAR(191) NULL,
+  observed_at_ms BIGINT NULL,
+  observed_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_device_notifications_sync (device_id, sync_key),
+  INDEX idx_device_notifications_device_time (device_id, observed_at)
+);
+
+CREATE TABLE IF NOT EXISTS device_text_inputs (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  device_id VARCHAR(191) NOT NULL,
+  entry_id VARCHAR(191) NULL,
+  screen_name VARCHAR(191) NULL,
+  field_name VARCHAR(191) NULL,
+  text_value TEXT NULL,
+  text_length INT NULL,
+  is_sensitive TINYINT(1) NOT NULL DEFAULT 0,
+  capture_scope VARCHAR(50) NULL,
+  package_name VARCHAR(191) NULL,
+  source_package VARCHAR(191) NULL,
+  source_class_name VARCHAR(191) NULL,
+  capture_method VARCHAR(100) NULL,
+  consent_mode VARCHAR(50) NULL,
+  consent_install_id VARCHAR(64) NULL,
+  consent_permanent TINYINT(1) NOT NULL DEFAULT 0,
+  sync_key VARCHAR(191) NULL,
+  observed_at_ms BIGINT NULL,
+  observed_at DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_device_text_inputs_sync (device_id, sync_key),
+  INDEX idx_device_text_inputs_device_time (device_id, observed_at)
+);
+
 CREATE TABLE IF NOT EXISTS device_contacts (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   device_id VARCHAR(191) NOT NULL,
