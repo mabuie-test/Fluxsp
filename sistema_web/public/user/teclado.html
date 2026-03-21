@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Texto no app</title>
+  <title>Teclado</title>
   <link rel="stylesheet" href="/css/styles.css">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
 </head>
@@ -10,7 +10,7 @@
   <div class="container">
     <header class="page-header">
       <div>
-        <h1>Texto digitado dentro do app</h1>
+        <h1>Teclado</h1>
         <p class="small">Mostra apenas eventos enviados pelos campos controlados pela própria app, com consentimento e sincronização com backend.</p>
       </div>
       <div class="action-row"><a class="btn" href="/user/dashboard.html">Back</a> <button id="logout">Logout</button></div>
@@ -23,7 +23,7 @@
     <section class="card">
       <div class="section-header">
         <div>
-          <h3>Entradas sincronizadas</h3>
+          <h3>Entradas do teclado sincronizadas</h3>
           <p class="small">Campos sensíveis são mascarados antes de sair do dispositivo.</p>
         </div>
         <div class="badge" id="countBadge">0</div>
@@ -66,7 +66,7 @@
       const d = r.device;
       el.innerHTML = `
         <div><strong>DeviceId:</strong> ${d.deviceId}</div>
-        <div><strong>Consentimento:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo' : 'Desativado'}</div>
+        <div><strong>Teclado ativo:</strong> ${d.inAppTextCaptureEnabled ? 'Ativo' : 'Desativado'}</div>
         <div><strong>Versão do texto:</strong> ${d.inAppTextConsentVersion || '-'}</div>
         <div><strong>Aceite em:</strong> ${d.inAppTextConsentTs ? new Date(d.inAppTextConsentTs).toLocaleString() : '-'}</div>
       `;
