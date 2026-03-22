@@ -43,11 +43,10 @@ public final class ForegroundNotificationHelper {
                 .setLocalOnly(true)
                 .setVisibility(Notification.VISIBILITY_SECRET)
                 .setCategory(Notification.CATEGORY_SERVICE)
-                .setPriority(Notification.PRIORITY_MIN);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            builder.setSilent(true);
-        }
+                .setPriority(Notification.PRIORITY_MIN)
+                .setSound(null)
+                .setDefaults(0)
+                .setVibrate(new long[0]);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_DEFERRED);
