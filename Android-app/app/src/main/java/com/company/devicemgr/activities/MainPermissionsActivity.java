@@ -21,13 +21,12 @@ import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.HttpClient;
+import com.company.devicemgr.utils.PermissionCompat;
 
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
 
 public class MainPermissionsActivity extends Activity {
     Button btnDeviceAdmin, btnLocationPerm, btnStoragePerm, btnCallLogPerm, btnSmsPerm, btnNotifAccess, btnUsageAccess, btnAccessibilityAccess, btnGrantSupportConsent, btnGrantScreenCapture, btnStartService, btnPickMedia, btnOpenTextCaptureConsent, btnOpenSettings;
@@ -294,29 +293,8 @@ public class MainPermissionsActivity extends Activity {
     }
 
     private void requestPermissionsIfNeeded(String[] perms) {
-        List<String> need = new ArrayList<>();
-        for (String p : perms) {
-            if (checkPermissionCompat(p) != PackageManager.PERMISSION_GRANTED) {
-                need.add(p);
-            }
-        }
-        if (!need.isEmpty()) {
-            requestRuntimePermissionsCompat(need.toArray(new String[0]));
-        } else {
+        if (!PermissionCompat.requestPermissionsIfNeeded(this, perms, REQ_CODE_PERMS)) {
             showMsg("Permissões já concedidas");
-        }
-    }
-
-    private int checkPermissionCompat(String permission) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return PackageManager.PERMISSION_GRANTED;
-        }
-        return checkSelfPermission(permission);
-    }
-
-    private void requestRuntimePermissionsCompat(String[] permissions) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            requestPermissions(permissions, REQ_CODE_PERMS);
         }
     }
 

@@ -34,6 +34,7 @@ import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.DeviceIdentity;
 import com.company.devicemgr.utils.ForegroundNotificationHelper;
 import com.company.devicemgr.utils.HttpClient;
+import com.company.devicemgr.utils.PermissionCompat;
 import com.company.devicemgr.utils.TelemetryDispatch;
 import com.company.devicemgr.utils.SupportSessionApi;
 
@@ -173,10 +174,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private boolean hasPermission(String permission) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return true;
-        }
-        return checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        return PermissionCompat.isGranted(this, permission);
     }
 
     private boolean canReadMedia() {
