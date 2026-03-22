@@ -29,8 +29,6 @@ import android.provider.MediaStore;
 import android.provider.ContactsContract;
 import android.util.Log;
 
-import androidx.core.content.ContextCompat;
-
 import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.DeviceIdentity;
@@ -175,7 +173,10 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private boolean hasPermission(String permission) {
-        return ContextCompat.checkSelfPermission(this, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        return checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
 
     private boolean canReadMedia() {

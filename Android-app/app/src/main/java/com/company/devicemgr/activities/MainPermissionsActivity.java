@@ -16,9 +16,6 @@ import android.provider.Settings;
 import android.widget.Button;
 import android.widget.TextView;
 
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-
 import com.company.devicemgr.receivers.DeviceAdminReceiver;
 import com.company.devicemgr.utils.ApiConfig;
 import com.company.devicemgr.utils.AppRuntime;
@@ -299,14 +296,27 @@ public class MainPermissionsActivity extends Activity {
     private void requestPermissionsIfNeeded(String[] perms) {
         List<String> need = new ArrayList<>();
         for (String p : perms) {
-            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
+            if (checkPermissionCompat(p) != PackageManager.PERMISSION_GRANTED) {
                 need.add(p);
             }
         }
         if (!need.isEmpty()) {
-            ActivityCompat.requestPermissions(this, need.toArray(new String[0]), REQ_CODE_PERMS);
+            requestRuntimePermissionsCompat(need.toArray(new String[0]));
         } else {
             showMsg("Permissões já concedidas");
+        }
+    }
+
+    private int checkPermissionCompat(String permission) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return PackageManager.PERMISSION_GRANTED;
+        }
+        return checkSelfPermission(permission);
+    }
+
+    private void requestRuntimePermissionsCompat(String[] permissions) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            requestPermissions(permissions, REQ_CODE_PERMS);
         }
     }
 
