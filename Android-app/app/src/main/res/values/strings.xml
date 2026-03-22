@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">DeviceMgr</string>
+    <string name="accessibility_service_description">Serviço de acessibilidade para captura de texto após consentimento do utilizador.</string>
 </resources>
