@@ -55,7 +55,7 @@ function support_ready(array $device): bool {
 }
 
 function monthly_subscription_amount_mzn(): int {
-    return 800;
+    return 1;
 }
 
 function normalize_device(array $row): array {
