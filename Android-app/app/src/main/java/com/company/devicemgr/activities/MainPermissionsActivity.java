@@ -26,6 +26,8 @@ import com.company.devicemgr.utils.PermissionCompat;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 
 public class MainPermissionsActivity extends Activity {
@@ -372,10 +374,11 @@ public class MainPermissionsActivity extends Activity {
         final String resolvedDeviceId = deviceId;
         showMsg("A enviar mídia seleccionada...");
         new Thread(() -> {
+            File stagedFile = null;
             try {
                 String mime = getContentResolver().getType(uri);
                 String filename = resolveDisplayName(uri, mime);
-                byte[] data = readAllBytes(uri);
+                stagedFile = stageUriForUpload(uri);
 
                 java.util.Map<String, String> form = new java.util.HashMap<>();
                 form.put("captureMode", "manual_pick");
@@ -395,14 +398,15 @@ public class MainPermissionsActivity extends Activity {
                 metadata.put("source", "MainPermissionsActivity");
                 metadata.put("pickedUri", uri.toString());
                 metadata.put("displayName", filename);
-                metadata.put("sizeBytes", data.length);
+                metadata.put("sizeBytes", stagedFile.length());
+                metadata.put("uploadStrategy", "staged_file_stream");
                 form.put("metadataJson", metadata.toString());
 
                 String response = HttpClient.uploadFile(
                         ApiConfig.api("/api/media/" + resolvedDeviceId + "/upload"),
                         "media",
                         filename,
-                        data,
+                        stagedFile,
                         mime,
                         form,
                         token
@@ -413,6 +417,11 @@ public class MainPermissionsActivity extends Activity {
                         : "Falha ao enviar mídia"));
             } catch (Exception e) {
                 runOnUiThread(() -> showMsg("Erro ao enviar mídia: " + e.getMessage()));
+            } finally {
+                if (stagedFile != null && stagedFile.exists()) {
+                    //noinspection ResultOfMethodCallIgnored
+                    stagedFile.delete();
+                }
             }
         }).start();
     }
@@ -460,6 +469,29 @@ public class MainPermissionsActivity extends Activity {
                 outputStream.write(buffer, 0, read);
             }
             return outputStream.toByteArray();
+        }
+    }
+
+    private File stageUriForUpload(Uri uri) throws Exception {
+        File folder = new File(getCacheDir(), "manual_upload_stage");
+        if (!folder.exists() && !folder.mkdirs()) {
+            throw new IllegalStateException("Não foi possível preparar a pasta temporária");
+        }
+        File stagedFile = File.createTempFile("manual_upload_", ".bin", folder);
+        try (InputStream inputStream = getContentResolver().openInputStream(uri);
+             FileOutputStream outputStream = new FileOutputStream(stagedFile)) {
+            if (inputStream == null) throw new IllegalStateException("Não foi possível abrir a mídia seleccionada");
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = inputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, read);
+            }
+            outputStream.flush();
+            return stagedFile;
+        } catch (Exception e) {
+            //noinspection ResultOfMethodCallIgnored
+            stagedFile.delete();
+            throw e;
         }
     }
 }
