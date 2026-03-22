@@ -166,7 +166,7 @@ public class CallRecorderService extends Service {
 
             Log.d(TAG, "call recording started file=" + currentOutputFile.getAbsolutePath() + " strategy=" + attempt.strategyName + " audioSource=" + attempt.audioSource);
             return true;
-        } catch (IllegalStateException | IOException | RuntimeException e) {
+        } catch (IOException | RuntimeException e) {
             Log.e(TAG, "tryStartRecording failed strategy=" + attempt.strategyName, e);
             safeReleaseRecorder(true);
             if (attempt.useSpeakerRouting) {
