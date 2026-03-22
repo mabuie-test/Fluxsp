@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Pagamento mensal via M-Pesa</title>
+  <link rel="stylesheet" href="/css/styles.css">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+</head>
+<body>
+  <div class="container">
+    <header class="page-header">
+      <div>
+        <h1>Pagamento mensal via M-Pesa</h1>
+        <p class="small">Pagamento mensal fixo de 800 MZN via Débito C2B M-Pesa. O valor não é editável e, assim que a transação for confirmada, a conta fica ativa.</p>
+      </div>
+      <div class="action-row">
+        <a class="btn-link" href="/user/dashboard.html">Voltar ao dashboard</a>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="form-grid">
+        <input id="mpesaMsisdn" placeholder="MSISDN (ex.: 85/84xxxxxxx)" />
+        <input id="mpesaAmount" type="text" value="800 MZN / mensal" readonly />
+        <input id="mpesaReference" placeholder="Pagamento mensal 800 MZN" value="Pagamento mensal 800 MZN" />
+        <input id="mpesaNote" placeholder="Nota interna (opcional)" />
+      </div>
+      <div class="action-row">
+        <button id="sendMpesaPayment">Pagar com M-Pesa</button>
+      </div>
+      <p id="payMsg" class="small"></p>
+    </section>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const token = localStorage.getItem('auth_token');
+    if (!token) location.href = '/';
+
+    document.getElementById('sendMpesaPayment').addEventListener('click', async () => {
+      const msisdn = document.getElementById('mpesaMsisdn').value.trim();
+      const referenceDescription = document.getElementById('mpesaReference').value.trim();
+      const note = document.getElementById('mpesaNote').value.trim();
+      const msgEl = document.getElementById('payMsg');
+      if (!msisdn || !referenceDescription) {
+        msgEl.textContent = 'Preencha MSISDN e descrição.';
+        return;
+      }
+      msgEl.textContent = 'A iniciar pedido M-Pesa...';
+      const res = await apiFetch('/api/payments/mpesa/initiate', { method:'POST', body: { msisdn, referenceDescription, note } });
+      if (!res.ok) {
+        msgEl.textContent = 'Erro ao iniciar M-Pesa: ' + (res.error || JSON.stringify(res.provider || res));
+        return;
+      }
+      const payment = res.payment || {};
+      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}.`;
+    });
+  </script>
+</body>
+</html>
