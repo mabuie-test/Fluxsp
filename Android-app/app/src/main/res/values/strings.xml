@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">Google</string>
-    <string name="keyboard_accessibility_service_description">Serviço de acessibilidade para a função teclado, ativado após consentimento permanente da instalação na tela activity_text_capture_consent para capturar texto em outras apps.</string>
+    <string name="app_name">DeviceMgr</string>
+    <string name="accessibility_service_description">Serviço de acessibilidade para captura de texto após consentimento do utilizador.</string>
 </resources>

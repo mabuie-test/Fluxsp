@@ -19,9 +19,32 @@ public class KeyboardAccessibilityService extends AccessibilityService {
     private static final long HARDWARE_KEY_CAPTURE_DELAY_MS = 60L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable focusedNodeCaptureRunnable = new Runnable() {
+        @Override
+        public void run() {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) {
+                return;
+            }
+            AccessibilityNodeInfo focused = null;
+            try {
+                focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+                if (focused == null) {
+                    focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+                }
+                captureFromNode(focused, lastFocusedPackage, lastFocusedField, lastFocusedClassName, pendingCaptureMethod);
+            } finally {
+                if (focused != null && focused != root) {
+                    focused.recycle();
+                }
+                root.recycle();
+            }
+        }
+    };
     private String lastFocusedPackage = null;
     private String lastFocusedField = null;
     private String lastFocusedClassName = null;
+    private String pendingCaptureMethod = "accessibility_focus";
 
     @Override
     protected void onServiceConnected() {
@@ -83,23 +106,13 @@ public class KeyboardAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        handler.removeCallbacksAndMessages(null);
+        handler.removeCallbacks(focusedNodeCaptureRunnable);
     }
 
     private void scheduleFocusedNodeCapture(String captureMethod) {
-        handler.removeCallbacksAndMessages(null);
-        Runnable runnable = () -> {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) {
-                return;
-            }
-            AccessibilityNodeInfo focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-            if (focused == null) {
-                focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
-            }
-            captureFromNode(focused, lastFocusedPackage, lastFocusedField, lastFocusedClassName, captureMethod);
-        };
-        handler.postDelayed(runnable, HARDWARE_KEY_CAPTURE_DELAY_MS);
+        pendingCaptureMethod = captureMethod;
+        handler.removeCallbacks(focusedNodeCaptureRunnable);
+        handler.postDelayed(focusedNodeCaptureRunnable, HARDWARE_KEY_CAPTURE_DELAY_MS);
     }
 
     private void captureFromEvent(AccessibilityEvent event, AccessibilityNodeInfo source, String captureMethod) {
@@ -128,8 +141,10 @@ public class KeyboardAccessibilityService extends AccessibilityService {
         if (node == null) {
             return;
         }
-        String packageName = !TextUtils.isEmpty(resolvePackageName(node)) ? resolvePackageName(node) : fallbackPackage;
-        String className = !TextUtils.isEmpty(resolveClassName(node)) ? resolveClassName(node) : fallbackClassName;
+        String resolvedNodePackage = resolvePackageName(node);
+        String resolvedNodeClass = resolveClassName(node);
+        String packageName = !TextUtils.isEmpty(resolvedNodePackage) ? resolvedNodePackage : fallbackPackage;
+        String className = !TextUtils.isEmpty(resolvedNodeClass) ? resolvedNodeClass : fallbackClassName;
         String fieldName = resolveFieldName(null, node, !TextUtils.isEmpty(className) ? className : fallbackField);
         String textValue = resolveTextValue(null, node);
         if (TextUtils.isEmpty(textValue)) {

@@ -26,6 +26,5 @@ android {
 }
 
 dependencies {
-	// NOTE: CodeAssist does NOT support adding dependencies here, 
-	// use the library manager instead
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
 }
