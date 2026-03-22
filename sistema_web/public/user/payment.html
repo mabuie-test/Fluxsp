@@ -36,6 +36,31 @@
   <script>
     const token = localStorage.getItem('auth_token');
     if (!token) location.href = '/';
+    let paymentPollHandle = null;
+
+    function stopPaymentPolling() {
+      if (paymentPollHandle) clearInterval(paymentPollHandle);
+      paymentPollHandle = null;
+    }
+
+    async function refreshPaymentStatus(paymentId, msgEl) {
+      const res = await apiFetch('/api/payments/' + encodeURIComponent(paymentId) + '/refresh-status', { method:'POST', body:{} });
+      if (!res.ok) {
+        msgEl.textContent = 'Pagamento iniciado, mas não foi possível confirmar o estado automaticamente.';
+        stopPaymentPolling();
+        return;
+      }
+      const payment = res.payment || {};
+      const state = payment.providerStatus || payment.status || 'pending';
+      msgEl.textContent = `Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${state}.`;
+      if (payment.status === 'completed') {
+        stopPaymentPolling();
+        msgEl.textContent = 'Pagamento confirmado e conta ativada automaticamente. A redirecionar para o dashboard...';
+        setTimeout(() => location.href = '/user/dashboard.html?payment=success', 1200);
+      } else if (payment.status === 'rejected') {
+        stopPaymentPolling();
+      }
+    }
 
     document.getElementById('sendMpesaPayment').addEventListener('click', async () => {
       const msisdn = document.getElementById('mpesaMsisdn').value.trim();
@@ -53,8 +78,15 @@
         return;
       }
       const payment = res.payment || {};
-      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}.`;
+      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}. A aguardar confirmação automática...`;
+      stopPaymentPolling();
+      if (payment._id) {
+        paymentPollHandle = setInterval(() => refreshPaymentStatus(payment._id, msgEl), 5000);
+        refreshPaymentStatus(payment._id, msgEl);
+      }
     });
+
+    window.addEventListener('beforeunload', stopPaymentPolling);
   </script>
 </body>
 </html>

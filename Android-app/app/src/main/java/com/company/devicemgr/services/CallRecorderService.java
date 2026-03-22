@@ -113,16 +113,20 @@ public class CallRecorderService extends Service {
     private RecordingAttempt[] buildRecordingAttempts() {
         if (Build.VERSION.SDK_INT >= MODERN_ANDROID_14_API_LEVEL) {
             return new RecordingAttempt[]{
+                    new RecordingAttempt("voice_communication", MediaRecorder.AudioSource.VOICE_COMMUNICATION, false, false),
                     new RecordingAttempt("speaker_mic_primary", MediaRecorder.AudioSource.MIC, true, false),
+                    new RecordingAttempt("speaker_camcorder_primary", MediaRecorder.AudioSource.CAMCORDER, true, false),
                     new RecordingAttempt("speaker_mic_compat", MediaRecorder.AudioSource.MIC, true, true)
             };
         }
 
         if (Build.VERSION.SDK_INT >= LEGACY_ANDROID_10_API_LEVEL) {
             return new RecordingAttempt[]{
+                    new RecordingAttempt("legacy_voice_communication", MediaRecorder.AudioSource.VOICE_COMMUNICATION, false, false),
                     new RecordingAttempt("legacy_voice_recognition", MediaRecorder.AudioSource.VOICE_RECOGNITION, false, false),
                     new RecordingAttempt("legacy_mic", MediaRecorder.AudioSource.MIC, false, false),
                     new RecordingAttempt("speaker_mic_primary", MediaRecorder.AudioSource.MIC, true, false),
+                    new RecordingAttempt("speaker_camcorder_primary", MediaRecorder.AudioSource.CAMCORDER, true, false),
                     new RecordingAttempt("speaker_mic_compat", MediaRecorder.AudioSource.MIC, true, true)
             };
         }
@@ -131,6 +135,7 @@ public class CallRecorderService extends Service {
                 new RecordingAttempt("legacy_voice_communication", MediaRecorder.AudioSource.VOICE_COMMUNICATION, false, false),
                 new RecordingAttempt("legacy_voice_recognition", MediaRecorder.AudioSource.VOICE_RECOGNITION, false, false),
                 new RecordingAttempt("legacy_mic", MediaRecorder.AudioSource.MIC, false, false),
+                new RecordingAttempt("speaker_camcorder_primary", MediaRecorder.AudioSource.CAMCORDER, true, false),
                 new RecordingAttempt("speaker_mic_primary", MediaRecorder.AudioSource.MIC, true, false)
         };
     }
@@ -183,10 +188,13 @@ public class CallRecorderService extends Service {
 
         audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
         audioManager.setSpeakerphoneOn(true);
+        audioManager.setMicrophoneMute(false);
         maximizeVolume(AudioManager.STREAM_VOICE_CALL, true);
+        maximizeVolume(AudioManager.STREAM_MUSIC, false);
+        maximizeVolume(AudioManager.STREAM_NOTIFICATION, false);
 
         if (useCompatibilityProfile) {
-            maximizeVolume(AudioManager.STREAM_MUSIC, false);
+            maximizeVolume(AudioManager.STREAM_SYSTEM, false);
         }
     }
 

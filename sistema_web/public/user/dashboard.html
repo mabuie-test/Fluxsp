@@ -300,8 +300,9 @@
       await loadMyPayments();
     }
 
-    async function loadMyPayments() {
-      const r = await apiFetch('/api/payments/mine', { method:'GET' });
+    async function loadMyPayments(syncPending = false) {
+      const suffix = syncPending ? '?syncPending=1' : '';
+      const r = await apiFetch('/api/payments/mine' + suffix, { method:'GET' });
       const tbody = document.querySelector('#myPayments tbody');
       tbody.innerHTML = '';
       if (!r.ok) {
@@ -332,7 +333,7 @@
     (async function(){
       await loadProfile();
       await loadMyDevices();
-      await loadMyPayments();
+      await loadMyPayments(true);
     })();
   </script>
 </body>

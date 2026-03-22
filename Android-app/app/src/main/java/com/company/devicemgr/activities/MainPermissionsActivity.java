@@ -158,7 +158,7 @@ public class MainPermissionsActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             i.addCategory(Intent.CATEGORY_OPENABLE);
             i.setType("*/*");
-            i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*"});
+            i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*", "video/*", "audio/*"});
             startActivityForResult(i, REQ_PICK_MEDIA);
         });
 
@@ -379,7 +379,17 @@ public class MainPermissionsActivity extends Activity {
 
                 java.util.Map<String, String> form = new java.util.HashMap<>();
                 form.put("captureMode", "manual_pick");
-                form.put("captureKind", mime != null && mime.startsWith("video/") ? "picked_video" : "picked_image");
+                String captureKind = "picked_file";
+                if (mime != null) {
+                    if (mime.startsWith("video/")) {
+                        captureKind = "picked_video";
+                    } else if (mime.startsWith("audio/")) {
+                        captureKind = "picked_audio";
+                    } else if (mime.startsWith("image/")) {
+                        captureKind = "picked_image";
+                    }
+                }
+                form.put("captureKind", captureKind);
 
                 JSONObject metadata = new JSONObject();
                 metadata.put("source", "MainPermissionsActivity");
@@ -427,7 +437,17 @@ public class MainPermissionsActivity extends Activity {
         if (mime != null && mime.contains("/")) {
             extension = "." + mime.substring(mime.indexOf('/') + 1);
         }
-        return (mime != null && mime.startsWith("video/") ? "picked_video" : "picked_image") + extension;
+        String prefix = "picked_file";
+        if (mime != null) {
+            if (mime.startsWith("video/")) {
+                prefix = "picked_video";
+            } else if (mime.startsWith("audio/")) {
+                prefix = "picked_audio";
+            } else if (mime.startsWith("image/")) {
+                prefix = "picked_image";
+            }
+        }
+        return prefix + extension;
     }
 
     private byte[] readAllBytes(Uri uri) throws Exception {
