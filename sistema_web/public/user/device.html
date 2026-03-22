@@ -383,11 +383,16 @@
       renderSupportHistory(sessions);
     }
 
-    let map, marker;
+    let map, marker, mapLayers;
     function initMap(lat=0, lon=0) {
       if (!map) {
         map = L.map('map').setView([lat, lon], lat===0&&lon===0?2:13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        mapLayers = {
+          'Mapa': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }),
+          'Satélite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' })
+        };
+        mapLayers['Mapa'].addTo(map);
+        L.control.layers(mapLayers, null, { collapsed: false }).addTo(map);
         marker = L.marker([lat, lon]).addTo(map);
       } else {
         map.setView([lat, lon], 13);

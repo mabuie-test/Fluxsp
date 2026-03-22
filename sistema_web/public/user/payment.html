@@ -11,7 +11,7 @@
     <header class="page-header">
       <div>
         <h1>Pagamento mensal via M-Pesa</h1>
-        <p class="small">Pagamento mensal fixo de 800 MZN via Débito C2B M-Pesa. O valor não é editável e, assim que a transação for confirmada, a conta fica ativa.</p>
+        <p class="small">Pagamento mensal fixo de 1 MZN via Débito C2B M-Pesa. O valor não é editável e, assim que a transação for confirmada, a conta fica ativa.</p>
       </div>
       <div class="action-row">
         <a class="btn-link" href="/user/dashboard.html">Voltar ao dashboard</a>
@@ -21,8 +21,8 @@
     <section class="card">
       <div class="form-grid">
         <input id="mpesaMsisdn" placeholder="MSISDN (ex.: 85/84xxxxxxx)" />
-        <input id="mpesaAmount" type="text" value="800 MZN / mensal" readonly />
-        <input id="mpesaReference" placeholder="Pagamento mensal 800 MZN" value="Pagamento mensal 800 MZN" />
+        <input id="mpesaAmount" type="text" value="1 MZN / mensal" readonly />
+        <input id="mpesaReference" placeholder="Pagamento mensal 1 MZN" value="Pagamento mensal 1 MZN" />
         <input id="mpesaNote" placeholder="Nota interna (opcional)" />
       </div>
       <div class="action-row">
@@ -36,6 +36,31 @@
   <script>
     const token = localStorage.getItem('auth_token');
     if (!token) location.href = '/';
+    let paymentPollHandle = null;
+
+    function stopPaymentPolling() {
+      if (paymentPollHandle) clearInterval(paymentPollHandle);
+      paymentPollHandle = null;
+    }
+
+    async function refreshPaymentStatus(paymentId, msgEl) {
+      const res = await apiFetch('/api/payments/' + encodeURIComponent(paymentId) + '/refresh-status', { method:'POST', body:{} });
+      if (!res.ok) {
+        msgEl.textContent = 'Pagamento iniciado, mas não foi possível confirmar o estado automaticamente.';
+        stopPaymentPolling();
+        return;
+      }
+      const payment = res.payment || {};
+      const state = payment.providerStatus || payment.status || 'pending';
+      msgEl.textContent = `Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${state}.`;
+      if (payment.status === 'completed') {
+        stopPaymentPolling();
+        msgEl.textContent = 'Pagamento confirmado e conta ativada automaticamente. A redirecionar para o dashboard...';
+        setTimeout(() => location.href = '/user/dashboard.html?payment=success', 1200);
+      } else if (payment.status === 'rejected') {
+        stopPaymentPolling();
+      }
+    }
 
     document.getElementById('sendMpesaPayment').addEventListener('click', async () => {
       const msisdn = document.getElementById('mpesaMsisdn').value.trim();
@@ -53,8 +78,15 @@
         return;
       }
       const payment = res.payment || {};
-      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}.`;
+      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}. A aguardar confirmação automática...`;
+      stopPaymentPolling();
+      if (payment._id) {
+        paymentPollHandle = setInterval(() => refreshPaymentStatus(payment._id, msgEl), 5000);
+        refreshPaymentStatus(payment._id, msgEl);
+      }
     });
+
+    window.addEventListener('beforeunload', stopPaymentPolling);
   </script>
 </body>
 </html>

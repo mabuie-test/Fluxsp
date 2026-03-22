@@ -8,6 +8,7 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -21,8 +22,9 @@ public class HttpClient {
             .build();
 
     private static final OkHttpClient uploadClient = client.newBuilder()
-            .writeTimeout(120, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.MINUTES)
+            .readTimeout(10, TimeUnit.MINUTES)
             .build();
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
@@ -55,9 +57,20 @@ public class HttpClient {
     }
 
     public static String uploadFile(String url, String fieldName, String filename, byte[] data, String mimeType, Map<String, String> formFields, String bearerToken) throws IOException {
-        MediaType mt = MediaType.parse(mimeType != null ? mimeType : "application/octet-stream");
-        RequestBody fileBody = RequestBody.create(mt, data);
+        return uploadFile(url, fieldName, filename, RequestBody.create(MediaType.parse(mimeType != null ? mimeType : "application/octet-stream"), data), formFields, bearerToken);
+    }
 
+    public static String uploadFile(String url, String fieldName, File file, String mimeType, Map<String, String> formFields, String bearerToken) throws IOException {
+        return uploadFile(url, fieldName, file != null ? file.getName() : "upload.bin", file, mimeType, formFields, bearerToken);
+    }
+
+    public static String uploadFile(String url, String fieldName, String filename, File file, String mimeType, Map<String, String> formFields, String bearerToken) throws IOException {
+        MediaType mt = MediaType.parse(mimeType != null ? mimeType : "application/octet-stream");
+        RequestBody fileBody = RequestBody.create(mt, file);
+        return uploadFile(url, fieldName, filename, fileBody, formFields, bearerToken);
+    }
+
+    private static String uploadFile(String url, String fieldName, String filename, RequestBody fileBody, Map<String, String> formFields, String bearerToken) throws IOException {
         MultipartBody.Builder bodyBuilder = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart(fieldName, filename, fileBody);

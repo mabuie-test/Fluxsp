@@ -10,6 +10,8 @@ import android.text.TextWatcher;
 import android.util.Log;
 import android.widget.EditText;
 
+import com.company.devicemgr.utils.AppRuntime;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -263,6 +265,10 @@ public final class InAppTextCaptureManager {
 
         appendEntry(sp, KEY_PENDING_QUEUE, entry, MAX_LOCAL_ITEMS);
         appendEntry(sp, KEY_LOCAL_LOG, entry, MAX_LOCAL_ITEMS);
+        try {
+            AppRuntime.ensureInAppTextCaptureStarted(context.getApplicationContext());
+        } catch (Exception ignored) {
+        }
         flushPendingAsync(context.getApplicationContext());
     }
 
