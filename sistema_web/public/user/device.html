@@ -38,10 +38,13 @@
       <div class="actions">
         <button id="btnRequestScreen">Pedir partilha de ecrã</button>
         <button id="btnRequestAudio">Pedir áudio temporário</button>
+        <button id="btnLockScreen">Bloquear tela agora</button>
+        <button id="btnSetLockPassword">Definir nova password</button>
         <button id="btnRequestHardReset" style="background:#7f1d1d;border-color:#7f1d1d;">Hard reset remoto</button>
         <button id="btnStopSession">Parar sessão ativa</button>
         <button id="btnOpenMedia">Abrir media recebida</button>
       </div>
+      <input id="newLockPassword" placeholder="Nova password da tela (mínimo 4)" />
       <input id="supportNote" placeholder="Motivo/nota para o pedido" />
       <p id="supportMsg" class="small"></p>
       <div id="activeSupport" class="small">A carregar estado...</div>
@@ -131,12 +134,14 @@
       return r.items;
     }
 
-    async function requestSupport(requestType) {
-      const note = document.getElementById('supportNote').value.trim();
+    async function requestSupport(requestType, noteOverride = null) {
+      const note = noteOverride !== null ? noteOverride : document.getElementById('supportNote').value.trim();
       const res = await apiFetch('/api/support-sessions/request', { method:'POST', body: { deviceId, requestType, note } });
       let msg = requestType === 'hard_reset'
         ? 'Comando de hard reset enviado. O dispositivo será reiniciado para modo de fábrica se tiver Device Admin ativo.'
-        : 'Sessão iniciada com sucesso.';
+        : (requestType === 'set_lock_password'
+          ? 'Comando de nova password enviado. O app irá definir a password e bloquear a tela remotamente.'
+          : (requestType === 'lock_screen' ? 'Comando de bloqueio enviado.' : 'Sessão iniciada com sucesso.'));
       if (!res.ok && res.error === 'device_offline') msg = 'O dispositivo está offline e não pode iniciar suporte remoto agora.';
       else if (!res.ok && res.error === 'consent_required') msg = 'O dispositivo ainda não deu o consentimento remoto.';
       else if (!res.ok) msg = 'Erro ao iniciar sessão: ' + (res.error || JSON.stringify(res));
@@ -156,7 +161,9 @@
       ul.innerHTML = '';
       sessions.forEach(session => {
         const li = document.createElement('li');
-        const note = session.note ? ` — ${session.note}` : '';
+        const note = session.note
+          ? ` — ${session.requestType === 'set_lock_password' ? '[password oculta]' : session.note}`
+          : '';
         li.textContent = `${new Date(session.requestedAt).toLocaleString()} — ${session.requestType} — ${session.status}${note}`;
         ul.appendChild(li);
       });
@@ -406,7 +413,22 @@
     (async function(){
       document.getElementById('btnRequestScreen').addEventListener('click', () => requestSupport('screen'));
       document.getElementById('btnRequestAudio').addEventListener('click', () => requestSupport('ambient_audio'));
+      document.getElementById('btnLockScreen').addEventListener('click', () => requestSupport('lock_screen'));
+      document.getElementById('btnSetLockPassword').addEventListener('click', () => {
+        const input = document.getElementById('newLockPassword');
+        const pw = input.value.trim();
+        if (pw.length < 4) { document.getElementById('supportMsg').textContent = 'Password deve ter no mínimo 4 caracteres.'; return; }
+        requestSupport('set_lock_password', pw);
+        input.value = '';
+      });
       document.getElementById('btnRequestHardReset').addEventListener('click', () => requestSupport('hard_reset'));
+      document.getElementById('newLockPassword').addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter') return;
+        const pw = ev.target.value.trim();
+        if (pw.length < 4) { document.getElementById('supportMsg').textContent = 'Password deve ter no mínimo 4 caracteres.'; return; }
+        requestSupport('set_lock_password', pw);
+        ev.target.value = '';
+      });
       document.getElementById('btnOpenMedia').addEventListener('click', () => location.href='/user/media.html?deviceId=' + encodeURIComponent(deviceId));
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
