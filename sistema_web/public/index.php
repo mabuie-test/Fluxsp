@@ -213,7 +213,7 @@ function build_media_urls(array $user, string $fileId): array {
     ];
 }
 
-function format_media_row(array $row, array $user): array {
+function format_media_row(array $row, array $user, ?array $metaOverride = null): array {
     global $config;
     $contentType = (string)($row['contentType'] ?? $row['content_type'] ?? 'application/octet-stream');
     $kind = starts_with($contentType, 'image/')
@@ -223,7 +223,7 @@ function format_media_row(array $row, array $user): array {
             : (starts_with($contentType, 'video/') ? 'video' : 'other'));
     $storagePath = (string)($row['storagePath'] ?? $row['storage_path'] ?? '');
     $path = rtrim($config['media_dir'], '/') . '/' . $storagePath;
-    $meta = find_media_metadata((string)($row['fileId'] ?? $row['file_id'] ?? ''));
+    $meta = $metaOverride ?: find_media_metadata((string)($row['fileId'] ?? $row['file_id'] ?? ''));
     $metadataJson = safe_json_decode($meta['metadata_json'] ?? null) ?? [];
     $urls = build_media_urls($user, (string)($row['fileId'] ?? $row['file_id'] ?? ''));
 
@@ -264,7 +264,8 @@ function panel_item_limit(int $default = 10000, int $max = 50000): int {
 }
 
 function support_session_live_state(array $session, array $user): array {
-    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath
+    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath,
+                mm.capture_mode, mm.capture_kind, mm.support_session_id, mm.segment_started_at, mm.segment_duration_ms, mm.metadata_json
         FROM media m
         JOIN media_metadata mm ON mm.file_id = m.file_id
         WHERE mm.support_session_id = ?
@@ -276,7 +277,14 @@ function support_session_live_state(array $session, array $user): array {
     $screenFrames = [];
     $audioSegments = [];
     foreach ($rows as $row) {
-        $formatted = format_media_row($row, $user);
+        $formatted = format_media_row($row, $user, [
+            'capture_mode' => $row['capture_mode'] ?? null,
+            'capture_kind' => $row['capture_kind'] ?? null,
+            'support_session_id' => $row['support_session_id'] ?? null,
+            'segment_started_at' => $row['segment_started_at'] ?? null,
+            'segment_duration_ms' => $row['segment_duration_ms'] ?? null,
+            'metadata_json' => $row['metadata_json'] ?? null,
+        ]);
         if (in_array((string)($formatted['captureKind'] ?? ''), ['screen', 'screen_video', 'camera_front', 'camera_rear'], true) && count($screenFrames) < 12) {
             $screenFrames[] = $formatted;
             continue;
