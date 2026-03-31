@@ -486,6 +486,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             } catch (Exception ignored) {
             }
             sendMetric("remote_command", "hard_reset", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+        } finally {
+            finalizeCommandSession(sessionId);
         }
     }
 
@@ -516,6 +518,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             } catch (Exception ignored) {
             }
             sendMetric("remote_command", "lock_screen", "error", null, null, ctx);
+        } finally {
+            finalizeCommandSession(sessionId);
         }
     }
 
@@ -559,6 +563,20 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             } catch (Exception ignored) {
             }
             sendMetric("remote_command", "set_lock_password", "error", null, null, ctx);
+        } finally {
+            finalizeCommandSession(sessionId);
+        }
+    }
+
+    private void finalizeCommandSession(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        try {
+            HttpClient.postJson(
+                    ApiConfig.api("/api/support-sessions/" + sessionId + "/stop"),
+                    "{}",
+                    currentToken()
+            );
+        } catch (Exception ignored) {
         }
     }
 
