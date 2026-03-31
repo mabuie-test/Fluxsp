@@ -1278,7 +1278,7 @@ try {
         $deviceId = trim((string)($body['deviceId'] ?? ''));
         $requestType = (string)($body['requestType'] ?? '');
         $note = trim((string)($body['note'] ?? ''));
-        if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio', 'camera_front', 'camera_rear'], true)) {
+        if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio', 'camera_front', 'camera_rear', 'hard_reset'], true)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
 
@@ -1325,7 +1325,9 @@ try {
             $normalized['stream'] = [
                 'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio'
                     ? 'audio_sequence'
-                    : (in_array(($normalized['requestType'] ?? null), ['camera_front', 'camera_rear'], true) ? 'camera_sequence' : 'screen_sequence'),
+                    : (in_array(($normalized['requestType'] ?? null), ['camera_front', 'camera_rear'], true)
+                        ? 'camera_sequence'
+                        : (($normalized['requestType'] ?? null) === 'hard_reset' ? 'command_once' : 'screen_sequence')),
                 'pollIntervalMs' => 10000,
                 'frameIntervalMs' => 60000,
                 'segmentDurationMs' => 60000,

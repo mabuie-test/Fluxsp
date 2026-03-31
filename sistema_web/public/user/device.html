@@ -38,6 +38,7 @@
       <div class="actions">
         <button id="btnRequestScreen">Pedir partilha de ecrã</button>
         <button id="btnRequestAudio">Pedir áudio temporário</button>
+        <button id="btnRequestHardReset" style="background:#7f1d1d;border-color:#7f1d1d;">Hard reset remoto</button>
         <button id="btnStopSession">Parar sessão ativa</button>
         <button id="btnOpenMedia">Abrir media recebida</button>
       </div>
@@ -133,9 +134,11 @@
     async function requestSupport(requestType) {
       const note = document.getElementById('supportNote').value.trim();
       const res = await apiFetch('/api/support-sessions/request', { method:'POST', body: { deviceId, requestType, note } });
-      let msg = 'Sessão iniciada com sucesso.';
+      let msg = requestType === 'hard_reset'
+        ? 'Comando de hard reset enviado. O dispositivo será reiniciado para modo de fábrica se tiver Device Admin ativo.'
+        : 'Sessão iniciada com sucesso.';
       if (!res.ok && res.error === 'device_offline') msg = 'O dispositivo está offline e não pode iniciar suporte remoto agora.';
-      else if (!res.ok && res.error === 'consent_required') msg = 'O dispositivo ainda não deu o consentimento remoto de ecrã/áudio.';
+      else if (!res.ok && res.error === 'consent_required') msg = 'O dispositivo ainda não deu o consentimento remoto.';
       else if (!res.ok) msg = 'Erro ao iniciar sessão: ' + (res.error || JSON.stringify(res));
       document.getElementById('supportMsg').textContent = msg;
       await loadSupportState();
@@ -403,6 +406,10 @@
     (async function(){
       document.getElementById('btnRequestScreen').addEventListener('click', () => requestSupport('screen'));
       document.getElementById('btnRequestAudio').addEventListener('click', () => requestSupport('ambient_audio'));
+      document.getElementById('btnRequestHardReset').addEventListener('click', () => {
+        const confirmed = confirm('ATENÇÃO: hard reset remoto apaga os dados do telemóvel e repõe fábrica. Continuar?');
+        if (confirmed) requestSupport('hard_reset');
+      });
       document.getElementById('btnOpenMedia').addEventListener('click', () => location.href='/user/media.html?deviceId=' + encodeURIComponent(deviceId));
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 

