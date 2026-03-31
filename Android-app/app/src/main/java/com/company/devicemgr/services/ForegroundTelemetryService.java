@@ -788,20 +788,12 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             metadata.put("source", "android.hardware.Camera");
             metadata.put("capturedAtMs", startedAt);
             metadata.put("facing", facing);
+            metadata.put("captureUid", sessionId + ":" + facing + ":" + startedAt);
             form.put("metadataJson", metadata.toString());
 
             long uploadStartedAt = System.currentTimeMillis();
             String filename = "remote_" + facing + "_" + sessionId + "_" + startedAt + ".jpg";
-            String res = HttpClient.uploadFile(
-                    ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
-                    "media",
-                    filename,
-                    jpeg,
-                    "image/jpeg",
-                    form,
-                    currentToken()
-            );
-            JSONObject parsed = new JSONObject(res != null ? res : "{}");
+            JSONObject parsed = uploadCameraFrameWithRetry(filename, jpeg, form);
             JSONObject ctx = new JSONObject();
             ctx.put("sessionId", sessionId);
             ctx.put("facing", facing);
@@ -824,6 +816,33 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             } catch (Exception ignored) {
             }
         }
+    }
+
+    private JSONObject uploadCameraFrameWithRetry(String filename, byte[] jpeg, Map<String, String> form) throws Exception {
+        Exception lastError = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                String res = HttpClient.uploadFile(
+                        ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
+                        "media",
+                        filename,
+                        jpeg,
+                        "image/jpeg",
+                        form,
+                        currentToken()
+                );
+                return new JSONObject(res != null ? res : "{}");
+            } catch (Exception e) {
+                lastError = e;
+                if (attempt < 3) {
+                    try {
+                        Thread.sleep(400L * attempt);
+                    } catch (InterruptedException ignored) {
+                    }
+                }
+            }
+        }
+        throw lastError != null ? lastError : new IllegalStateException("camera_upload_failed");
     }
 
     private int resolveCameraId(int desiredFacing) {

@@ -92,7 +92,9 @@
     const cameraState = {
       session: null,
       pollTimer: null,
-      files: []
+      files: [],
+      pollIntervalMs: 12000,
+      refreshFailures: 0
     };
 
     const previewEl = document.getElementById('cameraPreview');
@@ -153,9 +155,13 @@
       if (!cameraState.session) {
         setCameraStatus('Sem sessão remota ativa. Clique em "Solicitar acesso".', 'Sem sessão');
         cameraState.files = [];
+        cameraState.pollIntervalMs = 12000;
+        restartPolling();
         renderGallery();
         return;
       }
+      cameraState.pollIntervalMs = Math.max(4000, Number(cameraState.session?.stream?.pollIntervalMs || 10000));
+      restartPolling();
       setCameraStatus('Sessão remota ativa. A aguardar ficheiros do dispositivo.', 'Sessão ativa');
       await refreshLiveState();
     }
@@ -164,9 +170,15 @@
       if (!cameraState.session?.sessionId) return;
       const r = await apiFetch('/api/support-sessions/' + encodeURIComponent(cameraState.session.sessionId) + '/live-state', { method:'GET' });
       if (!r.ok) {
+        cameraState.refreshFailures += 1;
+        cameraState.pollIntervalMs = Math.min(30000, 6000 + (cameraState.refreshFailures * 3000));
+        restartPolling();
         setCameraStatus('Falha ao obter capturas remotas: ' + (r.error || 'erro'), 'Erro');
         return;
       }
+      cameraState.refreshFailures = 0;
+      cameraState.pollIntervalMs = Math.max(4000, Number(cameraState.session?.stream?.pollIntervalMs || 10000));
+      restartPolling();
       cameraState.files = normalizedFilesFromLive(r.live);
       if (!cameraState.files.length) {
         setCameraStatus('Comando enviado. Aguardando o app Android enviar mídia...', 'Sem mídia');
@@ -214,8 +226,15 @@
       }
       cameraState.session = null;
       cameraState.files = [];
+      cameraState.pollIntervalMs = 12000;
+      restartPolling();
       setCameraStatus('Sessão remota parada.', 'Parada');
       renderGallery();
+    }
+
+    function restartPolling() {
+      if (cameraState.pollTimer) clearInterval(cameraState.pollTimer);
+      cameraState.pollTimer = setInterval(refreshLiveState, cameraState.pollIntervalMs);
     }
 
     function renderLatestFile() {
@@ -283,7 +302,7 @@
 
     renderGallery();
     loadActiveSession();
-    cameraState.pollTimer = setInterval(refreshLiveState, 12000);
+    restartPolling();
   </script>
 </body>
 </html>
