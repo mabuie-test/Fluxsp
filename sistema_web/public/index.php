@@ -277,7 +277,7 @@ function support_session_live_state(array $session, array $user): array {
     $audioSegments = [];
     foreach ($rows as $row) {
         $formatted = format_media_row($row, $user);
-        if (in_array((string)($formatted['captureKind'] ?? ''), ['screen', 'screen_video'], true) && count($screenFrames) < 12) {
+        if (in_array((string)($formatted['captureKind'] ?? ''), ['screen', 'screen_video', 'camera_front', 'camera_rear'], true) && count($screenFrames) < 12) {
             $screenFrames[] = $formatted;
             continue;
         }
@@ -1270,7 +1270,7 @@ try {
         $deviceId = trim((string)($body['deviceId'] ?? ''));
         $requestType = (string)($body['requestType'] ?? '');
         $note = trim((string)($body['note'] ?? ''));
-        if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio'], true)) {
+        if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio', 'camera_front', 'camera_rear'], true)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
 
@@ -1315,7 +1315,9 @@ try {
         $normalized = $session ? normalize_support_session($session) : null;
         if ($normalized) {
             $normalized['stream'] = [
-                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_sequence' : 'screen_sequence',
+                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio'
+                    ? 'audio_sequence'
+                    : (in_array(($normalized['requestType'] ?? null), ['camera_front', 'camera_rear'], true) ? 'camera_sequence' : 'screen_sequence'),
                 'pollIntervalMs' => 10000,
                 'frameIntervalMs' => 60000,
                 'segmentDurationMs' => 60000,
