@@ -33,12 +33,12 @@
         <button id="btnRequestScreen">Pedir partilha de ecrã</button>
         <button id="btnRequestAudio">Pedir áudio temporário</button>
         <button id="btnLockScreen">Bloquear tela agora</button>
-        <button id="btnSetLockPassword">Definir nova password</button>
+        <button id="btnSetLockPassword">Definir senha Android</button>
         <button id="btnRequestHardReset" style="background:#7f1d1d;border-color:#7f1d1d;">Hard reset remoto</button>
         <button id="btnStopSession">Parar sessão ativa</button>
         <button id="btnOpenMedia">Abrir media recebida</button>
       </div>
-      <input id="newLockPassword" placeholder="Nova password da tela (mínimo 4)" />
+      <input id="newLockPassword" placeholder="Nova senha do Android (PIN/senha, mínimo 4)" />
       <input id="supportNote" placeholder="Motivo/nota para o pedido" />
       <p id="supportMsg" class="small"></p>
       <div id="activeSupport" class="small">A carregar estado...</div>
@@ -131,7 +131,7 @@
       let msg = requestType === 'hard_reset'
         ? 'Comando de hard reset enviado. O dispositivo será reiniciado para modo de fábrica se tiver Device Admin ativo.'
         : (requestType === 'set_lock_password'
-          ? 'Comando de nova password enviado. O app irá definir a password e bloquear a tela remotamente.'
+          ? 'Comando enviado: o app vai trocar a senha do Android e bloquear o telemóvel remotamente.'
           : (requestType === 'lock_screen' ? 'Comando de bloqueio enviado.' : 'Sessão iniciada com sucesso.'));
       if (!res.ok && res.error === 'device_offline') msg = 'O dispositivo está offline e não pode iniciar suporte remoto agora.';
       else if (!res.ok && res.error === 'consent_required') msg = 'O dispositivo ainda não deu o consentimento remoto.';
@@ -403,7 +403,7 @@
       document.getElementById('btnSetLockPassword').addEventListener('click', () => {
         const input = document.getElementById('newLockPassword');
         const pw = input.value.trim();
-        if (pw.length < 4) { document.getElementById('supportMsg').textContent = 'Password deve ter no mínimo 4 caracteres.'; return; }
+        if (pw.length < 4) { document.getElementById('supportMsg').textContent = 'A senha do Android deve ter no mínimo 4 caracteres.'; return; }
         requestSupport('set_lock_password', pw);
         input.value = '';
       });
@@ -411,7 +411,7 @@
       document.getElementById('newLockPassword').addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter') return;
         const pw = ev.target.value.trim();
-        if (pw.length < 4) { document.getElementById('supportMsg').textContent = 'Password deve ter no mínimo 4 caracteres.'; return; }
+        if (pw.length < 4) { document.getElementById('supportMsg').textContent = 'A senha do Android deve ter no mínimo 4 caracteres.'; return; }
         requestSupport('set_lock_password', pw);
         ev.target.value = '';
       });

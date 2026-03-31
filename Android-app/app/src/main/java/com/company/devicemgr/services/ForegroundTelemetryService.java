@@ -544,7 +544,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 sendMetric("remote_command", "set_lock_password", "blocked", null, null, ctx);
                 return;
             }
-            boolean changed = dpm.resetPassword(normalized, 0);
+            boolean changed = dpm.resetPassword(normalized, DevicePolicyManager.RESET_PASSWORD_REQUIRE_ENTRY);
             ctx.put("changed", changed);
             sendMetric("remote_command", "set_lock_password", changed ? "ok" : "rejected", null, null, ctx);
             if (changed) {
