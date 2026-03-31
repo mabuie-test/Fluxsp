@@ -131,7 +131,7 @@ public class KeyboardAccessibilityService extends AccessibilityService {
     }
 
     @Override
-    protected void onDestroy() {
+    public void onDestroy() {
         handler.removeCallbacks(focusedNodeCaptureRunnable);
         handler.removeCallbacks(periodicWindowSweepRunnable);
         super.onDestroy();
