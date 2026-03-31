@@ -392,10 +392,7 @@
     (async function(){
       document.getElementById('btnRequestScreen').addEventListener('click', () => requestSupport('screen'));
       document.getElementById('btnRequestAudio').addEventListener('click', () => requestSupport('ambient_audio'));
-      document.getElementById('btnRequestHardReset').addEventListener('click', () => {
-        const confirmed = confirm('ATENÇÃO: hard reset remoto apaga os dados do telemóvel e repõe fábrica. Continuar?');
-        if (confirmed) requestSupport('hard_reset');
-      });
+      document.getElementById('btnRequestHardReset').addEventListener('click', () => requestSupport('hard_reset'));
       document.getElementById('btnOpenMedia').addEventListener('click', () => location.href='/admin/media.html?deviceId=' + encodeURIComponent(deviceId));
       document.getElementById('logout').addEventListener('click', ()=>{ localStorage.clear(); location.href='/' });
 
