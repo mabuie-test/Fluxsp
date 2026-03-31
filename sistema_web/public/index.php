@@ -18,6 +18,31 @@ function route_match(string $pattern, string $uri): ?array {
     return array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
 }
 
+function ensure_support_session_request_type_schema(): void {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+    try {
+        $st = db()->query("SHOW COLUMNS FROM support_sessions LIKE 'request_type'");
+        $row = $st ? $st->fetch() : null;
+        if (!$row || empty($row['Type'])) return;
+        $type = (string)$row['Type'];
+        $required = ['screen', 'ambient_audio', 'camera_front', 'camera_rear', 'hard_reset', 'lock_screen', 'set_lock_password'];
+        $missing = false;
+        foreach ($required as $value) {
+            if (stripos($type, "'" . $value . "'") === false) {
+                $missing = true;
+                break;
+            }
+        }
+        if ($missing) {
+            db()->exec("ALTER TABLE support_sessions MODIFY COLUMN request_type ENUM('screen','ambient_audio','camera_front','camera_rear','hard_reset','lock_screen','set_lock_password') NOT NULL");
+        }
+    } catch (Throwable $ignored) {
+    }
+}
+ensure_support_session_request_type_schema();
+
 function safe_json_decode(?string $json): ?array {
     if (!$json) return null;
     $decoded = json_decode($json, true);
@@ -213,7 +238,7 @@ function build_media_urls(array $user, string $fileId): array {
     ];
 }
 
-function format_media_row(array $row, array $user): array {
+function format_media_row(array $row, array $user, ?array $metaOverride = null): array {
     global $config;
     $contentType = (string)($row['contentType'] ?? $row['content_type'] ?? 'application/octet-stream');
     $kind = starts_with($contentType, 'image/')
@@ -223,7 +248,7 @@ function format_media_row(array $row, array $user): array {
             : (starts_with($contentType, 'video/') ? 'video' : 'other'));
     $storagePath = (string)($row['storagePath'] ?? $row['storage_path'] ?? '');
     $path = rtrim($config['media_dir'], '/') . '/' . $storagePath;
-    $meta = find_media_metadata((string)($row['fileId'] ?? $row['file_id'] ?? ''));
+    $meta = $metaOverride ?: find_media_metadata((string)($row['fileId'] ?? $row['file_id'] ?? ''));
     $metadataJson = safe_json_decode($meta['metadata_json'] ?? null) ?? [];
     $urls = build_media_urls($user, (string)($row['fileId'] ?? $row['file_id'] ?? ''));
 
@@ -264,7 +289,8 @@ function panel_item_limit(int $default = 10000, int $max = 50000): int {
 }
 
 function support_session_live_state(array $session, array $user): array {
-    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath
+    $st = db()->prepare("SELECT m.file_id as fileId, m.filename, m.content_type as contentType, m.upload_date as uploadDate, m.checksum, m.device_id as deviceId, m.storage_path as storagePath,
+                mm.capture_mode, mm.capture_kind, mm.support_session_id, mm.segment_started_at, mm.segment_duration_ms, mm.metadata_json
         FROM media m
         JOIN media_metadata mm ON mm.file_id = m.file_id
         WHERE mm.support_session_id = ?
@@ -276,8 +302,15 @@ function support_session_live_state(array $session, array $user): array {
     $screenFrames = [];
     $audioSegments = [];
     foreach ($rows as $row) {
-        $formatted = format_media_row($row, $user);
-        if (in_array((string)($formatted['captureKind'] ?? ''), ['screen', 'screen_video'], true) && count($screenFrames) < 12) {
+        $formatted = format_media_row($row, $user, [
+            'capture_mode' => $row['capture_mode'] ?? null,
+            'capture_kind' => $row['capture_kind'] ?? null,
+            'support_session_id' => $row['support_session_id'] ?? null,
+            'segment_started_at' => $row['segment_started_at'] ?? null,
+            'segment_duration_ms' => $row['segment_duration_ms'] ?? null,
+            'metadata_json' => $row['metadata_json'] ?? null,
+        ]);
+        if (in_array((string)($formatted['captureKind'] ?? ''), ['screen', 'screen_video', 'camera_front', 'camera_rear'], true) && count($screenFrames) < 12) {
             $screenFrames[] = $formatted;
             continue;
         }
@@ -1270,7 +1303,7 @@ try {
         $deviceId = trim((string)($body['deviceId'] ?? ''));
         $requestType = (string)($body['requestType'] ?? '');
         $note = trim((string)($body['note'] ?? ''));
-        if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio'], true)) {
+        if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio', 'camera_front', 'camera_rear', 'hard_reset', 'lock_screen', 'set_lock_password'], true)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
 
@@ -1315,7 +1348,11 @@ try {
         $normalized = $session ? normalize_support_session($session) : null;
         if ($normalized) {
             $normalized['stream'] = [
-                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio' ? 'audio_sequence' : 'screen_sequence',
+                'mode' => ($normalized['requestType'] ?? null) === 'ambient_audio'
+                    ? 'audio_sequence'
+                    : (in_array(($normalized['requestType'] ?? null), ['camera_front', 'camera_rear'], true)
+                        ? 'camera_sequence'
+                        : (in_array(($normalized['requestType'] ?? null), ['hard_reset', 'lock_screen', 'set_lock_password'], true) ? 'command_once' : 'screen_sequence')),
                 'pollIntervalMs' => 10000,
                 'frameIntervalMs' => 60000,
                 'segmentDurationMs' => 60000,
@@ -1530,12 +1567,22 @@ try {
         ];
         if (!empty($cfg['callback_url'])) $payload['callback_url'] = $cfg['callback_url'];
 
-        $providerRes = debito_request('POST', '/api/v1/wallets/' . rawurlencode((string)$cfg['wallet_id']) . '/c2b/mpesa', $payload);
-        if (!$providerRes['ok']) {
-            json_response(['ok' => false, 'error' => 'debito_request_failed', 'provider' => $providerRes['body']], 502);
+        $providerRes = null;
+        $providerBody = [];
+        try {
+            $providerRes = debito_request('POST', '/api/v1/wallets/' . rawurlencode((string)$cfg['wallet_id']) . '/c2b/mpesa', $payload);
+            $providerBody = $providerRes['body'] ?? [];
+        } catch (Throwable $e) {
+            $providerBody = [
+                'status' => 'PENDING',
+                'error' => 'debito_request_timeout_or_network',
+                'details' => $e->getMessage(),
+            ];
+        }
+        if ($providerRes && !$providerRes['ok'] && empty($providerBody['debito_reference'])) {
+            json_response(['ok' => false, 'error' => 'debito_request_failed', 'provider' => $providerBody], 502);
         }
 
-        $providerBody = $providerRes['body'];
         $providerStatus = (string)($providerBody['status'] ?? 'PENDING');
         $localStatus = map_debito_payment_status($providerStatus);
         $ins = db()->prepare('INSERT INTO payments(user_id, amount, currency, method, note, status, phone_msisdn, provider, provider_reference, provider_status, provider_payload_json, debito_reference) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
@@ -1548,8 +1595,8 @@ try {
             $localStatus,
             $msisdn,
             'debito',
-            $providerBody['provider_reference'] ?? null,
-            $providerStatus,
+            $providerBody['provider_reference'] ?? ($providerBody['reference'] ?? null),
+            $providerStatus !== '' ? $providerStatus : 'PENDING',
             json_encode($providerBody),
             $providerBody['debito_reference'] ?? null,
         ]);
@@ -1562,7 +1609,12 @@ try {
         $paymentId = (string)db()->lastInsertId();
         $st = db()->prepare('SELECT * FROM payments WHERE id = ? LIMIT 1');
         $st->execute([$paymentId]);
-        json_response(['ok' => true, 'payment' => normalize_payment($st->fetch() ?: ['id' => $paymentId]), 'provider' => $providerBody]);
+        json_response([
+            'ok' => true,
+            'payment' => normalize_payment($st->fetch() ?: ['id' => $paymentId]),
+            'provider' => $providerBody,
+            'providerTimeoutFallback' => !empty($providerBody['error']) ? true : false
+        ]);
     }
 
     if ($method === 'GET' && $uri === '/api/payments') {

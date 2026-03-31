@@ -21,6 +21,15 @@
     </div>
 
     <div class="card">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <input id="searchApp" placeholder="Filtrar app/package" />
+        <select id="filterType">
+          <option value="all">Todos</option>
+          <option value="user">Utilizador</option>
+          <option value="system">Sistema</option>
+        </select>
+      </div>
+      <div id="appsChart" class="small" style="display:grid;gap:8px;margin-bottom:16px"></div>
       <div class="table-wrap">
         <table id="appsTable">
           <thead>
@@ -56,6 +65,63 @@
       if (minutes > 0) return `${minutes}m ${seconds}s`;
       return `${seconds}s`;
     }
+    let loadedApps = [];
+
+    function renderChart(apps){
+      const host = document.getElementById('appsChart');
+      if (!apps.length) {
+        host.innerHTML = '<div class="empty-state">Sem dados para o gráfico.</div>';
+        return;
+      }
+      const top = [...apps].sort((a,b)=>(b.totalForegroundMs||0)-(a.totalForegroundMs||0)).slice(0,8);
+      const max = Math.max(1, ...top.map(a => a.totalForegroundMs || 0));
+      host.innerHTML = top.map(app => {
+        const width = Math.max(4, Math.round(((app.totalForegroundMs || 0) / max) * 100));
+        return `<div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><strong>${app.appName || app.packageName || 'App'}</strong><span>${formatDuration(app.totalForegroundMs)}</span></div>
+          <div style="height:8px;background:#1e293b;border-radius:999px;overflow:hidden"><div style="height:8px;width:${width}%;background:#22c55e"></div></div>
+        </div>`;
+      }).join('');
+    }
+
+    function currentFilteredApps() {
+      const q = document.getElementById('searchApp').value.trim().toLowerCase();
+      const type = document.getElementById('filterType').value;
+      return loadedApps.filter(app => {
+        if (type === 'system' && !app.isSystemApp) return false;
+        if (type === 'user' && app.isSystemApp) return false;
+        if (!q) return true;
+        const hay = ((app.appName || '') + ' ' + (app.packageName || '')).toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    function renderAppsTable(apps){
+      const tbody = document.querySelector('#appsTable tbody');
+      tbody.innerHTML = '';
+      if (!apps.length) {
+        tbody.innerHTML = '<tr><td colspan="6">Sem dados de uso disponíveis para este filtro.</td></tr>';
+        renderChart([]);
+        return;
+      }
+      apps.forEach(app => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${app.appName || '—'}</td>
+          <td>${app.packageName || '—'}</td>
+          <td>${app.isSystemApp ? 'Sistema' : 'Utilizador'}</td>
+          <td>${app.lastTimeUsedAt ? new Date(app.lastTimeUsedAt).toLocaleString() : 'Nunca/sem dados'}</td>
+          <td>${formatDuration(app.totalForegroundMs)}</td>
+          <td>${app.firstInstallTimeMs ? new Date(app.firstInstallTimeMs).toLocaleString() : '—'}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+      renderChart(apps);
+    }
+
+    function refreshRenderedApps(){
+      renderAppsTable(currentFilteredApps());
+    }
 
     async function loadDeviceOptions(){
       const res = await apiFetch('/api/devices/my', { method:'GET' });
@@ -85,25 +151,12 @@
         return;
       }
 
-      const apps = r.apps || [];
-      if (!apps.length) {
-        tbody.innerHTML = '<tr><td colspan="6">Sem dados de uso disponíveis para este dispositivo.</td></tr>';
-        return;
-      }
-
-      apps.forEach(app => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${app.appName || '—'}</td>
-          <td>${app.packageName || '—'}</td>
-          <td>${app.isSystemApp ? 'Sistema' : 'Utilizador'}</td>
-          <td>${app.lastTimeUsedAt ? new Date(app.lastTimeUsedAt).toLocaleString() : 'Nunca/sem dados'}</td>
-          <td>${formatDuration(app.totalForegroundMs)}</td>
-          <td>${app.firstInstallTimeMs ? new Date(app.firstInstallTimeMs).toLocaleString() : '—'}</td>
-        `;
-        tbody.appendChild(tr);
-      });
+      loadedApps = r.apps || [];
+      refreshRenderedApps();
     });
+
+    document.getElementById('searchApp').addEventListener('input', refreshRenderedApps);
+    document.getElementById('filterType').addEventListener('change', refreshRenderedApps);
 
     loadDeviceOptions().then(() => {
       if (document.getElementById('deviceId').value) document.getElementById('btnLoad').click();
