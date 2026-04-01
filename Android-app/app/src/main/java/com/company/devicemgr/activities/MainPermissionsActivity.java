@@ -45,6 +45,7 @@ public class MainPermissionsActivity extends Activity {
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
     private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
     private volatile boolean pendingRemoteConsentAfterPermissions = false;
+    private volatile boolean pendingStartAfterPermissions = false;
 
     @Override
     protected void onCreate(Bundle s) {
@@ -206,6 +207,13 @@ public class MainPermissionsActivity extends Activity {
             showMsg("Conceda primeiro o consentimento remoto de ecrã/áudio");
             return;
         }
+        if (!hasAllPermissions(getStoragePermissionsForCurrentVersion())) {
+            pendingStartAfterPermissions = true;
+            requestPermissionsIfNeeded(getStoragePermissionsForCurrentVersion());
+            showMsg("Conceda acesso a ficheiros/media para ativar envio automático.");
+            return;
+        }
+        pendingStartAfterPermissions = false;
 
         AppRuntime.ensureTelemetryStarted(this);
         showMsg("Serviço iniciado");
@@ -312,6 +320,14 @@ public class MainPermissionsActivity extends Activity {
         }
     }
 
+    private boolean hasAllPermissions(String[] permissions) {
+        if (permissions == null || permissions.length == 0) return true;
+        for (String permission : permissions) {
+            if (!PermissionCompat.isGranted(this, permission)) return false;
+        }
+        return true;
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
@@ -356,6 +372,11 @@ public class MainPermissionsActivity extends Activity {
                 grantRemoteSupportConsent();
             } else if (!ok) {
                 pendingRemoteConsentAfterPermissions = false;
+            }
+            if (ok && pendingStartAfterPermissions) {
+                startTelemetryService();
+            } else if (!ok) {
+                pendingStartAfterPermissions = false;
             }
         }
     }

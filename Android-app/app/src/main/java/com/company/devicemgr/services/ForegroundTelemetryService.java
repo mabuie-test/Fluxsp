@@ -1482,6 +1482,10 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             SharedPreferences sp = prefs();
             String deviceId = currentDeviceId();
             String token = currentToken();
+            if (token == null || token.trim().isEmpty() || deviceId == null || deviceId.trim().isEmpty()) {
+                Log.w(TAG, "media upload skipped: missing auth token or deviceId");
+                return;
+            }
 
             String uploadedJson = sp.getString(KEY_UPLOADED_MEDIA_HASHES, "{}");
             JSONObject uploadedObj = new JSONObject(uploadedJson);
