@@ -78,7 +78,10 @@
         return;
       }
       const payment = res.payment || {};
-      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}. A aguardar confirmação automática...`;
+      const fallbackHint = res.providerTimeoutFallback
+        ? ' O gateway demorou a responder; confirme o PIN no USSD e aguarde sincronização automática.'
+        : '';
+      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}. A aguardar confirmação automática...${fallbackHint}`;
       stopPaymentPolling();
       if (payment._id) {
         paymentPollHandle = setInterval(() => refreshPaymentStatus(payment._id, msgEl), 5000);

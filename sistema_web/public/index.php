@@ -1552,10 +1552,12 @@ try {
         if (!debito_is_configured()) json_response(['ok' => false, 'error' => 'debito_not_configured'], 503);
 
         $msisdn = preg_replace('/\D+/', '', (string)($body['msisdn'] ?? ''));
+        if (strlen($msisdn) === 9) $msisdn = '258' . $msisdn;
+        if (strlen($msisdn) === 10 && strpos($msisdn, '0') === 0) $msisdn = '258' . substr($msisdn, 1);
         $amount = (float)monthly_subscription_amount_mzn();
         $referenceDescription = trim((string)($body['referenceDescription'] ?? $body['reference_description'] ?? ('Pagamento mensal ' . monthly_subscription_amount_mzn() . ' MZN')));
         $note = trim((string)($body['note'] ?? ''));
-        if ($msisdn === '' || $referenceDescription === '') {
+        if ($msisdn === '' || $referenceDescription === '' || !preg_match('/^2588[4-7]\d{7}$/', $msisdn)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
 
@@ -1579,8 +1581,12 @@ try {
                 'details' => $e->getMessage(),
             ];
         }
-        if ($providerRes && !$providerRes['ok'] && empty($providerBody['debito_reference'])) {
-            json_response(['ok' => false, 'error' => 'debito_request_failed', 'provider' => $providerBody], 502);
+        if ($providerRes && !$providerRes['ok']) {
+            if (($providerBody['status'] ?? null) === null) $providerBody['status'] = 'PENDING';
+            $providerBody['provider_error'] = true;
+            if (!isset($providerBody['message']) && isset($providerBody['raw'])) {
+                $providerBody['message'] = is_string($providerBody['raw']) ? substr($providerBody['raw'], 0, 180) : 'provider_pending';
+            }
         }
 
         $providerStatus = (string)($providerBody['status'] ?? 'PENDING');
