@@ -41,7 +41,6 @@ function ensure_support_session_request_type_schema(): void {
     } catch (Throwable $ignored) {
     }
 }
-ensure_support_session_request_type_schema();
 
 function safe_json_decode(?string $json): ?array {
     if (!$json) return null;
@@ -907,6 +906,7 @@ if (!starts_with($uri, '/api')) {
 
 try {
     ensure_schema();
+    ensure_support_session_request_type_schema();
     $body = get_json_body();
 
     if ($method === 'GET' && $uri === '/api/health') {
