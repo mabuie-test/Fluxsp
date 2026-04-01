@@ -1235,9 +1235,6 @@ try {
 
         $d = find_device($deviceId);
         if ($d) {
-            if (!empty($d['owner_user_id']) && (string)$d['owner_user_id'] !== (string)$u['id']) {
-                json_response(['ok' => false, 'error' => 'already_claimed'], 403);
-            }
             $up = db()->prepare('UPDATE devices SET owner_user_id = ?, last_seen = COALESCE(last_seen, NOW()) WHERE device_id = ?');
             $up->execute([$u['id'], $deviceId]);
         } else {
@@ -1512,7 +1509,9 @@ try {
                 $d = find_device($deviceId);
             }
             if ($d && !can_access_device($u, $d)) {
-                json_response(['ok' => false, 'error' => 'forbidden'], 403);
+                $reassign = db()->prepare('UPDATE devices SET owner_user_id = ?, last_seen = ? WHERE device_id = ?');
+                $reassign->execute([$u['id'], date('Y-m-d H:i:s'), $deviceId]);
+                $d = find_device($deviceId);
             }
         }
 
