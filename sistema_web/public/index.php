@@ -625,6 +625,31 @@ function device_app_usage_items(string $deviceId, ?int $limit = null): array {
     $st->bindValue(1, $deviceId);
     $st->bindValue(2, $limit, PDO::PARAM_INT);
     $st->execute();
+    $rows = $st->fetchAll();
+    if (!$rows) {
+        $fallback = db()->prepare("SELECT payload FROM telemetry WHERE device_id = ? AND JSON_EXTRACT(payload, '$.type') = 'app_usage_snapshot' ORDER BY ts DESC LIMIT 1");
+        $fallback->execute([$deviceId]);
+        $latest = $fallback->fetch();
+        if ($latest && !empty($latest['payload'])) {
+            $payload = safe_json_decode($latest['payload']) ?? [];
+            $apps = is_array($payload['apps'] ?? null) ? $payload['apps'] : [];
+            return array_slice(array_map(static function (array $app): array {
+                return [
+                    'packageName' => $app['packageName'] ?? null,
+                    'appName' => $app['appName'] ?? ($app['packageName'] ?? null),
+                    'isSystemApp' => !empty($app['isSystemApp']),
+                    'firstInstallTimeMs' => isset($app['firstInstallTimeMs']) ? (int)$app['firstInstallTimeMs'] : null,
+                    'lastTimeUsedMs' => isset($app['lastTimeUsedMs']) ? (int)$app['lastTimeUsedMs'] : null,
+                    'lastTimeUsedAt' => json_datetime_from_millis($app['lastTimeUsedMs'] ?? null),
+                    'totalForegroundMs' => isset($app['totalForegroundMs']) ? (int)$app['totalForegroundMs'] : 0,
+                    'usageWindowStartAt' => json_datetime_from_millis($payload['windowStartMs'] ?? null),
+                    'usageWindowEndAt' => json_datetime_from_millis($payload['windowEndMs'] ?? null),
+                    'capturedAt' => json_datetime_from_millis($payload['capturedAtMs'] ?? null),
+                    'updatedAt' => null,
+                ];
+            }, $apps), 0, $limit);
+        }
+    }
     return array_map(static function (array $row): array {
         return [
             'packageName' => $row['package_name'],
@@ -639,7 +664,7 @@ function device_app_usage_items(string $deviceId, ?int $limit = null): array {
             'capturedAt' => $row['captured_at'] ?? null,
             'updatedAt' => $row['updated_at'] ?? null,
         ];
-    }, $st->fetchAll());
+    }, $rows);
 }
 
 function persistent_message_items(string $deviceId, string $source, ?int $limit = null): array {
@@ -1552,12 +1577,12 @@ try {
         if (!debito_is_configured()) json_response(['ok' => false, 'error' => 'debito_not_configured'], 503);
 
         $msisdn = preg_replace('/\D+/', '', (string)($body['msisdn'] ?? ''));
-        if (strlen($msisdn) === 9) $msisdn = '258' . $msisdn;
-        if (strlen($msisdn) === 10 && strpos($msisdn, '0') === 0) $msisdn = '258' . substr($msisdn, 1);
+        if (strlen($msisdn) === 12 && strpos($msisdn, '258') === 0) $msisdn = substr($msisdn, 3);
+        if (strlen($msisdn) === 10 && strpos($msisdn, '0') === 0) $msisdn = substr($msisdn, 1);
         $amount = (float)monthly_subscription_amount_mzn();
         $referenceDescription = trim((string)($body['referenceDescription'] ?? $body['reference_description'] ?? ('Pagamento mensal ' . monthly_subscription_amount_mzn() . ' MZN')));
         $note = trim((string)($body['note'] ?? ''));
-        if ($msisdn === '' || $referenceDescription === '' || !preg_match('/^2588[4-7]\d{7}$/', $msisdn)) {
+        if ($msisdn === '' || $referenceDescription === '' || !preg_match('/^8[4-7]\d{7}$/', $msisdn)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
 

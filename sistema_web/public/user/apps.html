@@ -124,7 +124,11 @@
     }
 
     async function loadDeviceOptions(){
-      const res = await apiFetch('/api/devices/my', { method:'GET' });
+      let res = await apiFetch('/api/devices/my', { method:'GET' });
+      if (!res.ok || !(res.devices || []).length) {
+        const adminRes = await apiFetch('/api/devices', { method:'GET' });
+        if (adminRes.ok && (adminRes.devices || []).length) res = adminRes;
+      }
       const sel = document.getElementById('deviceSelect');
       if (!res.ok) return;
       sel.innerHTML = '<option value="">Selecione um dispositivo</option>';
