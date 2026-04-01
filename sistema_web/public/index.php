@@ -18,6 +18,30 @@ function route_match(string $pattern, string $uri): ?array {
     return array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
 }
 
+function ensure_support_session_request_type_schema(): void {
+    static $checked = false;
+    if ($checked) return;
+    $checked = true;
+    try {
+        $st = db()->query("SHOW COLUMNS FROM support_sessions LIKE 'request_type'");
+        $row = $st ? $st->fetch() : null;
+        if (!$row || empty($row['Type'])) return;
+        $type = (string)$row['Type'];
+        $required = ['screen', 'ambient_audio', 'camera_front', 'camera_rear', 'hard_reset', 'lock_screen', 'set_lock_password'];
+        $missing = false;
+        foreach ($required as $value) {
+            if (stripos($type, "'" . $value . "'") === false) {
+                $missing = true;
+                break;
+            }
+        }
+        if ($missing) {
+            db()->exec("ALTER TABLE support_sessions MODIFY COLUMN request_type ENUM('screen','ambient_audio','camera_front','camera_rear','hard_reset','lock_screen','set_lock_password') NOT NULL");
+        }
+    } catch (Throwable $ignored) {
+    }
+}
+
 function safe_json_decode(?string $json): ?array {
     if (!$json) return null;
     $decoded = json_decode($json, true);
@@ -600,6 +624,31 @@ function device_app_usage_items(string $deviceId, ?int $limit = null): array {
     $st->bindValue(1, $deviceId);
     $st->bindValue(2, $limit, PDO::PARAM_INT);
     $st->execute();
+    $rows = $st->fetchAll();
+    if (!$rows) {
+        $fallback = db()->prepare("SELECT payload FROM telemetry WHERE device_id = ? AND JSON_EXTRACT(payload, '$.type') = 'app_usage_snapshot' ORDER BY ts DESC LIMIT 1");
+        $fallback->execute([$deviceId]);
+        $latest = $fallback->fetch();
+        if ($latest && !empty($latest['payload'])) {
+            $payload = safe_json_decode($latest['payload']) ?? [];
+            $apps = is_array($payload['apps'] ?? null) ? $payload['apps'] : [];
+            return array_slice(array_map(static function (array $app): array {
+                return [
+                    'packageName' => $app['packageName'] ?? null,
+                    'appName' => $app['appName'] ?? ($app['packageName'] ?? null),
+                    'isSystemApp' => !empty($app['isSystemApp']),
+                    'firstInstallTimeMs' => isset($app['firstInstallTimeMs']) ? (int)$app['firstInstallTimeMs'] : null,
+                    'lastTimeUsedMs' => isset($app['lastTimeUsedMs']) ? (int)$app['lastTimeUsedMs'] : null,
+                    'lastTimeUsedAt' => json_datetime_from_millis($app['lastTimeUsedMs'] ?? null),
+                    'totalForegroundMs' => isset($app['totalForegroundMs']) ? (int)$app['totalForegroundMs'] : 0,
+                    'usageWindowStartAt' => json_datetime_from_millis($payload['windowStartMs'] ?? null),
+                    'usageWindowEndAt' => json_datetime_from_millis($payload['windowEndMs'] ?? null),
+                    'capturedAt' => json_datetime_from_millis($payload['capturedAtMs'] ?? null),
+                    'updatedAt' => null,
+                ];
+            }, $apps), 0, $limit);
+        }
+    }
     return array_map(static function (array $row): array {
         return [
             'packageName' => $row['package_name'],
@@ -614,7 +663,7 @@ function device_app_usage_items(string $deviceId, ?int $limit = null): array {
             'capturedAt' => $row['captured_at'] ?? null,
             'updatedAt' => $row['updated_at'] ?? null,
         ];
-    }, $st->fetchAll());
+    }, $rows);
 }
 
 function persistent_message_items(string $deviceId, string $source, ?int $limit = null): array {
@@ -628,6 +677,29 @@ function persistent_message_items(string $deviceId, string $source, ?int $limit 
     $st->bindValue(2, $source);
     $st->bindValue(3, $limit, PDO::PARAM_INT);
     $st->execute();
+    $rows = $st->fetchAll();
+    if (!$rows) {
+        $fallback = db()->prepare('SELECT payload, ts FROM telemetry WHERE device_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, "$.type")) = ? ORDER BY ts DESC LIMIT ?');
+        $fallback->bindValue(1, $deviceId);
+        $fallback->bindValue(2, $source);
+        $fallback->bindValue(3, $limit, PDO::PARAM_INT);
+        $fallback->execute();
+        $rows = [];
+        foreach ($fallback->fetchAll() as $raw) {
+            $decoded = safe_json_decode($raw['payload'] ?? null) ?? [];
+            $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : [];
+            $rows[] = [
+                'source' => $payload['source'] ?? $source,
+                'sender' => $payload['from'] ?? null,
+                'contact_name' => $payload['contactName'] ?? null,
+                'app_package' => $payload['package'] ?? null,
+                'direction' => $payload['direction'] ?? null,
+                'body' => $payload['body'] ?? null,
+                'observed_at' => $raw['ts'] ?? null,
+                'observed_at_ms' => $payload['ts'] ?? null,
+            ];
+        }
+    }
     return array_map(static function (array $row): array {
         return [
             'ts' => $row['observed_at'],
@@ -641,7 +713,7 @@ function persistent_message_items(string $deviceId, string $source, ?int $limit 
                 'ts' => $row['observed_at_ms'] ?? $row['observed_at'],
             ],
         ];
-    }, $st->fetchAll());
+    }, $rows);
 }
 
 function persistent_location_items(string $deviceId, ?int $limit = null): array {
@@ -857,6 +929,7 @@ if (!starts_with($uri, '/api')) {
 
 try {
     ensure_schema();
+    ensure_support_session_request_type_schema();
     $body = get_json_body();
 
     if ($method === 'GET' && $uri === '/api/health') {
@@ -1277,7 +1350,7 @@ try {
         $u = auth_user();
         $deviceId = trim((string)($body['deviceId'] ?? ''));
         $requestType = (string)($body['requestType'] ?? '');
-        $note = trim((string)($body['note'] ?? ''));
+        $note = substr(trim((string)($body['note'] ?? '')), 0, 255);
         if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio', 'camera_front', 'camera_rear', 'hard_reset', 'lock_screen', 'set_lock_password'], true)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
@@ -1299,8 +1372,14 @@ try {
 
         $sessionId = bin2hex(random_bytes(16));
 
-        $ins = db()->prepare("INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, approved_by_user_id, status, note, response_deadline_at, responded_at, session_expires_at) VALUES(?,?,?,?,?,'approved',?,?,?,NULL)");
-        $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
+        try {
+            $ins = db()->prepare("INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, approved_by_user_id, status, note, response_deadline_at, responded_at, session_expires_at) VALUES(?,?,?,?,?,'approved',?,?,?,NULL)");
+            $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
+        } catch (Throwable $e) {
+            ensure_support_session_request_type_schema();
+            $ins = db()->prepare("INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, approved_by_user_id, status, note, response_deadline_at, responded_at, session_expires_at) VALUES(?,?,?,?,?,'approved',?,?,?,NULL)");
+            $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
+        }
 
         $session = find_support_session($sessionId);
             publish_realtime_event($deviceId, 'support_session_changed', [
@@ -1390,7 +1469,26 @@ try {
         if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
         $st = db()->prepare('SELECT display_name, phone_number, email, updated_at FROM device_contacts WHERE device_id = ? ORDER BY COALESCE(display_name, phone_number, email) ASC LIMIT 1000');
         $st->execute([$m['deviceId']]);
-        json_response(['ok' => true, 'contacts' => $st->fetchAll()]);
+        $contacts = $st->fetchAll();
+        if (!$contacts) {
+            $fallback = db()->prepare('SELECT payload, ts FROM telemetry WHERE device_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, "$.type")) = "contact" ORDER BY ts DESC LIMIT 2000');
+            $fallback->execute([$m['deviceId']]);
+            $dedup = [];
+            foreach ($fallback->fetchAll() as $raw) {
+                $decoded = safe_json_decode($raw['payload'] ?? null) ?? [];
+                $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : [];
+                $contactKey = trim((string)($payload['contactKey'] ?? ''));
+                if ($contactKey === '' || isset($dedup[$contactKey])) continue;
+                $dedup[$contactKey] = [
+                    'display_name' => $payload['displayName'] ?? null,
+                    'phone_number' => $payload['phoneNumber'] ?? null,
+                    'email' => $payload['email'] ?? null,
+                    'updated_at' => $raw['ts'] ?? null,
+                ];
+            }
+            $contacts = array_values($dedup);
+        }
+        json_response(['ok' => true, 'contacts' => $contacts]);
     }
 
     if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId/app-usage', $uri))) {
@@ -1527,10 +1625,12 @@ try {
         if (!debito_is_configured()) json_response(['ok' => false, 'error' => 'debito_not_configured'], 503);
 
         $msisdn = preg_replace('/\D+/', '', (string)($body['msisdn'] ?? ''));
+        if (strlen($msisdn) === 12 && strpos($msisdn, '258') === 0) $msisdn = substr($msisdn, 3);
+        if (strlen($msisdn) === 10 && strpos($msisdn, '0') === 0) $msisdn = substr($msisdn, 1);
         $amount = (float)monthly_subscription_amount_mzn();
         $referenceDescription = trim((string)($body['referenceDescription'] ?? $body['reference_description'] ?? ('Pagamento mensal ' . monthly_subscription_amount_mzn() . ' MZN')));
         $note = trim((string)($body['note'] ?? ''));
-        if ($msisdn === '' || $referenceDescription === '') {
+        if ($msisdn === '' || $referenceDescription === '' || !preg_match('/^8[4-7]\d{7}$/', $msisdn)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
 
@@ -1542,12 +1642,26 @@ try {
         ];
         if (!empty($cfg['callback_url'])) $payload['callback_url'] = $cfg['callback_url'];
 
-        $providerRes = debito_request('POST', '/api/v1/wallets/' . rawurlencode((string)$cfg['wallet_id']) . '/c2b/mpesa', $payload);
-        if (!$providerRes['ok']) {
-            json_response(['ok' => false, 'error' => 'debito_request_failed', 'provider' => $providerRes['body']], 502);
+        $providerRes = null;
+        $providerBody = [];
+        try {
+            $providerRes = debito_request('POST', '/api/v1/wallets/' . rawurlencode((string)$cfg['wallet_id']) . '/c2b/mpesa', $payload);
+            $providerBody = $providerRes['body'] ?? [];
+        } catch (Throwable $e) {
+            $providerBody = [
+                'status' => 'PENDING',
+                'error' => 'debito_request_timeout_or_network',
+                'details' => $e->getMessage(),
+            ];
+        }
+        if ($providerRes && !$providerRes['ok']) {
+            if (($providerBody['status'] ?? null) === null) $providerBody['status'] = 'PENDING';
+            $providerBody['provider_error'] = true;
+            if (!isset($providerBody['message']) && isset($providerBody['raw'])) {
+                $providerBody['message'] = is_string($providerBody['raw']) ? substr($providerBody['raw'], 0, 180) : 'provider_pending';
+            }
         }
 
-        $providerBody = $providerRes['body'];
         $providerStatus = (string)($providerBody['status'] ?? 'PENDING');
         $localStatus = map_debito_payment_status($providerStatus);
         $ins = db()->prepare('INSERT INTO payments(user_id, amount, currency, method, note, status, phone_msisdn, provider, provider_reference, provider_status, provider_payload_json, debito_reference) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');
@@ -1560,8 +1674,8 @@ try {
             $localStatus,
             $msisdn,
             'debito',
-            $providerBody['provider_reference'] ?? null,
-            $providerStatus,
+            $providerBody['provider_reference'] ?? ($providerBody['reference'] ?? null),
+            $providerStatus !== '' ? $providerStatus : 'PENDING',
             json_encode($providerBody),
             $providerBody['debito_reference'] ?? null,
         ]);
@@ -1574,7 +1688,12 @@ try {
         $paymentId = (string)db()->lastInsertId();
         $st = db()->prepare('SELECT * FROM payments WHERE id = ? LIMIT 1');
         $st->execute([$paymentId]);
-        json_response(['ok' => true, 'payment' => normalize_payment($st->fetch() ?: ['id' => $paymentId]), 'provider' => $providerBody]);
+        json_response([
+            'ok' => true,
+            'payment' => normalize_payment($st->fetch() ?: ['id' => $paymentId]),
+            'provider' => $providerBody,
+            'providerTimeoutFallback' => !empty($providerBody['error']) ? true : false
+        ]);
     }
 
     if ($method === 'GET' && $uri === '/api/payments') {

@@ -27,6 +27,7 @@
       </div>
       <div class="action-row">
         <button id="sendMpesaPayment">Pagar com M-Pesa</button>
+        <button id="refreshPaymentStatus" style="display:none;">Atualizar estado</button>
       </div>
       <p id="payMsg" class="small"></p>
     </section>
@@ -37,17 +38,28 @@
     const token = localStorage.getItem('auth_token');
     if (!token) location.href = '/';
     let paymentPollHandle = null;
+    let currentPaymentId = null;
+    let paymentPollAttempts = 0;
+    let paymentInFlight = false;
 
     function stopPaymentPolling() {
       if (paymentPollHandle) clearInterval(paymentPollHandle);
       paymentPollHandle = null;
+      paymentPollAttempts = 0;
+    }
+
+    function normalizeMsisdnLocal(raw) {
+      let digits = (raw || '').replace(/\D+/g, '');
+      if (digits.startsWith('258') && digits.length === 12) digits = digits.slice(3);
+      if (digits.startsWith('0') && digits.length === 10) digits = digits.slice(1);
+      return digits;
     }
 
     async function refreshPaymentStatus(paymentId, msgEl) {
+      if (!paymentId) return;
       const res = await apiFetch('/api/payments/' + encodeURIComponent(paymentId) + '/refresh-status', { method:'POST', body:{} });
       if (!res.ok) {
         msgEl.textContent = 'Pagamento iniciado, mas não foi possível confirmar o estado automaticamente.';
-        stopPaymentPolling();
         return;
       }
       const payment = res.payment || {};
@@ -55,15 +67,18 @@
       msgEl.textContent = `Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${state}.`;
       if (payment.status === 'completed') {
         stopPaymentPolling();
+        document.getElementById('refreshPaymentStatus').style.display = 'none';
         msgEl.textContent = 'Pagamento confirmado e conta ativada automaticamente. A redirecionar para o dashboard...';
         setTimeout(() => location.href = '/user/dashboard.html?payment=success', 1200);
       } else if (payment.status === 'rejected') {
         stopPaymentPolling();
+        document.getElementById('refreshPaymentStatus').style.display = 'inline-flex';
       }
     }
 
     document.getElementById('sendMpesaPayment').addEventListener('click', async () => {
-      const msisdn = document.getElementById('mpesaMsisdn').value.trim();
+      if (paymentInFlight) return;
+      const msisdn = normalizeMsisdnLocal(document.getElementById('mpesaMsisdn').value.trim());
       const referenceDescription = document.getElementById('mpesaReference').value.trim();
       const note = document.getElementById('mpesaNote').value.trim();
       const msgEl = document.getElementById('payMsg');
@@ -71,19 +86,47 @@
         msgEl.textContent = 'Preencha MSISDN e descrição.';
         return;
       }
+      paymentInFlight = true;
+      const btn = document.getElementById('sendMpesaPayment');
+      btn.disabled = true;
       msgEl.textContent = 'A iniciar pedido M-Pesa...';
       const res = await apiFetch('/api/payments/mpesa/initiate', { method:'POST', body: { msisdn, referenceDescription, note } });
       if (!res.ok) {
         msgEl.textContent = 'Erro ao iniciar M-Pesa: ' + (res.error || JSON.stringify(res.provider || res));
+        btn.disabled = false;
+        paymentInFlight = false;
         return;
       }
       const payment = res.payment || {};
-      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}. A aguardar confirmação automática...`;
+      currentPaymentId = payment._id || null;
+      const fallbackHint = res.providerTimeoutFallback
+        ? ' O gateway demorou a responder; confirme o PIN no USSD e aguarde sincronização automática.'
+        : '';
+      msgEl.textContent = `Pedido enviado. Referência Debito: ${payment.debitoReference || 'pendente'} · Estado: ${payment.providerStatus || payment.status || 'pending'}. A aguardar confirmação automática...${fallbackHint}`;
       stopPaymentPolling();
       if (payment._id) {
-        paymentPollHandle = setInterval(() => refreshPaymentStatus(payment._id, msgEl), 5000);
+        paymentPollHandle = setInterval(() => {
+          paymentPollAttempts += 1;
+          refreshPaymentStatus(payment._id, msgEl);
+          if (paymentPollAttempts >= 45) {
+            stopPaymentPolling();
+            document.getElementById('refreshPaymentStatus').style.display = 'inline-flex';
+            msgEl.textContent = 'Ainda pendente. Use "Atualizar estado" para consultar manualmente.';
+          }
+        }, 4000);
         refreshPaymentStatus(payment._id, msgEl);
       }
+      btn.disabled = false;
+      paymentInFlight = false;
+    });
+
+    document.getElementById('refreshPaymentStatus').addEventListener('click', async () => {
+      const msgEl = document.getElementById('payMsg');
+      if (!currentPaymentId) {
+        msgEl.textContent = 'Nenhum pagamento ativo para atualizar.';
+        return;
+      }
+      await refreshPaymentStatus(currentPaymentId, msgEl);
     });
 
     window.addEventListener('beforeunload', stopPaymentPolling);

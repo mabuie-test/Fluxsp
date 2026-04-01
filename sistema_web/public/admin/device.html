@@ -127,7 +127,11 @@
 
     async function requestSupport(requestType, noteOverride = null) {
       const note = noteOverride !== null ? noteOverride : document.getElementById('supportNote').value.trim();
-      const res = await apiFetch('/api/support-sessions/request', { method:'POST', body: { deviceId, requestType, note } });
+      let res = await apiFetch('/api/support-sessions/request', { method:'POST', body: { deviceId, requestType, note } });
+      if (!res.ok && res.error === 'session_already_open' && res.sessionId) {
+        await apiFetch('/api/support-sessions/' + encodeURIComponent(res.sessionId) + '/stop', { method:'POST', body:{} });
+        res = await apiFetch('/api/support-sessions/request', { method:'POST', body: { deviceId, requestType, note } });
+      }
       let msg = requestType === 'hard_reset'
         ? 'Comando de hard reset enviado. O dispositivo será reiniciado para modo de fábrica se tiver Device Admin ativo.'
         : (requestType === 'set_lock_password'

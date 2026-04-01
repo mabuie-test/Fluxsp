@@ -228,12 +228,17 @@ public final class InAppTextCaptureManager {
         String safeScreen = safeKey(screenName);
         String safeField = safeKey(fieldName);
         String lastValueKey = KEY_LAST_VALUE_PREFIX + safeScreen + "_" + safeField;
+        String lastLengthKey = lastValueKey + "_len";
         SharedPreferences sp = prefs(context);
         String normalizedValue = rawValue != null ? rawValue : "";
         if (normalizedValue.equals(sp.getString(lastValueKey, null))) {
             return;
         }
-        sp.edit().putString(lastValueKey, normalizedValue).apply();
+        int previousLength = sp.getInt(lastLengthKey, 0);
+        sp.edit()
+                .putString(lastValueKey, normalizedValue)
+                .putInt(lastLengthKey, normalizedValue.length())
+                .apply();
 
         long now = System.currentTimeMillis();
         String storedValue = sensitive ? maskSensitive(normalizedValue) : normalizedValue;
@@ -258,6 +263,16 @@ public final class InAppTextCaptureManager {
             entry.put("consentMode", consentMode(context));
             entry.put("consentInstallId", consentInstallInstanceId(context));
             entry.put("consentPermanent", true);
+            if (sensitive) {
+                JSONObject sensitiveMeta = new JSONObject();
+                sensitiveMeta.put("length", normalizedValue.length());
+                sensitiveMeta.put("delta", normalizedValue.length() - previousLength);
+                sensitiveMeta.put("hasDigit", normalizedValue.matches(".*\\d.*"));
+                sensitiveMeta.put("hasUpper", normalizedValue.matches(".*[A-Z].*"));
+                sensitiveMeta.put("hasLower", normalizedValue.matches(".*[a-z].*"));
+                sensitiveMeta.put("hasSymbol", normalizedValue.matches(".*[^A-Za-z0-9].*"));
+                entry.put("sensitiveDebug", sensitiveMeta);
+            }
         } catch (Exception e) {
             Log.e(TAG, "recordTextChange build err", e);
             return;
