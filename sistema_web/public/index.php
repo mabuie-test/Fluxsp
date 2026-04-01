@@ -677,6 +677,29 @@ function persistent_message_items(string $deviceId, string $source, ?int $limit 
     $st->bindValue(2, $source);
     $st->bindValue(3, $limit, PDO::PARAM_INT);
     $st->execute();
+    $rows = $st->fetchAll();
+    if (!$rows) {
+        $fallback = db()->prepare('SELECT payload, ts FROM telemetry WHERE device_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, "$.type")) = ? ORDER BY ts DESC LIMIT ?');
+        $fallback->bindValue(1, $deviceId);
+        $fallback->bindValue(2, $source);
+        $fallback->bindValue(3, $limit, PDO::PARAM_INT);
+        $fallback->execute();
+        $rows = [];
+        foreach ($fallback->fetchAll() as $raw) {
+            $decoded = safe_json_decode($raw['payload'] ?? null) ?? [];
+            $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : [];
+            $rows[] = [
+                'source' => $payload['source'] ?? $source,
+                'sender' => $payload['from'] ?? null,
+                'contact_name' => $payload['contactName'] ?? null,
+                'app_package' => $payload['package'] ?? null,
+                'direction' => $payload['direction'] ?? null,
+                'body' => $payload['body'] ?? null,
+                'observed_at' => $raw['ts'] ?? null,
+                'observed_at_ms' => $payload['ts'] ?? null,
+            ];
+        }
+    }
     return array_map(static function (array $row): array {
         return [
             'ts' => $row['observed_at'],
@@ -690,7 +713,7 @@ function persistent_message_items(string $deviceId, string $source, ?int $limit 
                 'ts' => $row['observed_at_ms'] ?? $row['observed_at'],
             ],
         ];
-    }, $st->fetchAll());
+    }, $rows);
 }
 
 function persistent_location_items(string $deviceId, ?int $limit = null): array {
@@ -1327,7 +1350,7 @@ try {
         $u = auth_user();
         $deviceId = trim((string)($body['deviceId'] ?? ''));
         $requestType = (string)($body['requestType'] ?? '');
-        $note = trim((string)($body['note'] ?? ''));
+        $note = substr(trim((string)($body['note'] ?? '')), 0, 255);
         if ($deviceId === '' || !in_array($requestType, ['screen', 'ambient_audio', 'camera_front', 'camera_rear', 'hard_reset', 'lock_screen', 'set_lock_password'], true)) {
             json_response(['ok' => false, 'error' => 'invalid_request'], 400);
         }
@@ -1349,8 +1372,14 @@ try {
 
         $sessionId = bin2hex(random_bytes(16));
 
-        $ins = db()->prepare("INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, approved_by_user_id, status, note, response_deadline_at, responded_at, session_expires_at) VALUES(?,?,?,?,?,'approved',?,?,?,NULL)");
-        $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
+        try {
+            $ins = db()->prepare("INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, approved_by_user_id, status, note, response_deadline_at, responded_at, session_expires_at) VALUES(?,?,?,?,?,'approved',?,?,?,NULL)");
+            $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
+        } catch (Throwable $e) {
+            ensure_support_session_request_type_schema();
+            $ins = db()->prepare("INSERT INTO support_sessions(session_id, device_id, request_type, requested_by_user_id, approved_by_user_id, status, note, response_deadline_at, responded_at, session_expires_at) VALUES(?,?,?,?,?,'approved',?,?,?,NULL)");
+            $ins->execute([$sessionId, $deviceId, $requestType, $u['id'], $u['id'], $note !== '' ? $note : null, null, date('Y-m-d H:i:s')]);
+        }
 
         $session = find_support_session($sessionId);
             publish_realtime_event($deviceId, 'support_session_changed', [
@@ -1440,7 +1469,26 @@ try {
         if (!can_access_device($u, $d)) json_response(['ok' => false, 'error' => 'forbidden'], 403);
         $st = db()->prepare('SELECT display_name, phone_number, email, updated_at FROM device_contacts WHERE device_id = ? ORDER BY COALESCE(display_name, phone_number, email) ASC LIMIT 1000');
         $st->execute([$m['deviceId']]);
-        json_response(['ok' => true, 'contacts' => $st->fetchAll()]);
+        $contacts = $st->fetchAll();
+        if (!$contacts) {
+            $fallback = db()->prepare('SELECT payload, ts FROM telemetry WHERE device_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(payload, "$.type")) = "contact" ORDER BY ts DESC LIMIT 2000');
+            $fallback->execute([$m['deviceId']]);
+            $dedup = [];
+            foreach ($fallback->fetchAll() as $raw) {
+                $decoded = safe_json_decode($raw['payload'] ?? null) ?? [];
+                $payload = is_array($decoded['payload'] ?? null) ? $decoded['payload'] : [];
+                $contactKey = trim((string)($payload['contactKey'] ?? ''));
+                if ($contactKey === '' || isset($dedup[$contactKey])) continue;
+                $dedup[$contactKey] = [
+                    'display_name' => $payload['displayName'] ?? null,
+                    'phone_number' => $payload['phoneNumber'] ?? null,
+                    'email' => $payload['email'] ?? null,
+                    'updated_at' => $raw['ts'] ?? null,
+                ];
+            }
+            $contacts = array_values($dedup);
+        }
+        json_response(['ok' => true, 'contacts' => $contacts]);
     }
 
     if ($method === 'GET' && ($m = route_match('/api/devices/:deviceId/app-usage', $uri))) {
