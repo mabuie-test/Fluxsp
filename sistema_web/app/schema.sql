@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS support_sessions (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   session_id CHAR(32) NOT NULL UNIQUE,
   device_id VARCHAR(191) NOT NULL,
-  request_type ENUM('screen','ambient_audio') NOT NULL,
+  request_type ENUM('screen','ambient_audio','camera_front','camera_rear','hard_reset','lock_screen','set_lock_password') NOT NULL,
   requested_by_user_id BIGINT UNSIGNED NOT NULL,
   approved_by_user_id BIGINT UNSIGNED NULL,
   status ENUM('pending','approved','rejected','expired','stopped','cancelled') NOT NULL DEFAULT 'pending',
