@@ -265,7 +265,12 @@ public class ForegroundTelemetryService extends Service implements LocationListe
     }
 
     private String currentDeviceId() {
-        return prefs().getString("deviceId", "unknown");
+        String deviceId = prefs().getString("deviceId", null);
+        if (deviceId == null || deviceId.trim().isEmpty() || "unknown".equalsIgnoreCase(deviceId.trim())) {
+            deviceId = DeviceIdentity.getStableDeviceId(this);
+            prefs().edit().putString("deviceId", deviceId).apply();
+        }
+        return deviceId;
     }
 
     private String currentToken() {

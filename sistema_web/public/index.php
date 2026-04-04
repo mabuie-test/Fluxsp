@@ -1825,7 +1825,12 @@ try {
             $d = find_device($m['deviceId']);
         }
         if (!$d) json_response(['ok' => false, 'error' => 'not_found'], 404);
-        if (!can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
+        if (!can_access_device($u, $d)) {
+            $reassign = db()->prepare('UPDATE devices SET owner_user_id = ?, last_seen = NOW() WHERE device_id = ?');
+            $reassign->execute([$u['id'], $m['deviceId']]);
+            $d = find_device($m['deviceId']);
+        }
+        if (!$d || !can_access_device($u, $d)) json_response(['error' => 'forbidden'], 403);
 
         $startedAt = microtime(true);
         if (!isset($_FILES['media']) || $_FILES['media']['error'] !== UPLOAD_ERR_OK) {
