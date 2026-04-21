@@ -1,0 +1,89 @@
+CREATE TABLE roles (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(50) UNIQUE NOT NULL,
+  description VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE users (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(120) NOT NULL,
+  email VARCHAR(190) UNIQUE NOT NULL,
+  phone VARCHAR(20) NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  institution_id BIGINT UNSIGNED NULL,
+  course_id BIGINT UNSIGNED NULL,
+  discipline_id BIGINT UNSIGNED NULL,
+  is_active TINYINT(1) DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE user_roles (
+  user_id BIGINT UNSIGNED NOT NULL,
+  role_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY(user_id, role_id)
+);
+
+CREATE TABLE institutions (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(190) NOT NULL,
+  short_name VARCHAR(80) NULL,
+  city VARCHAR(120) NULL,
+  country VARCHAR(120) NULL,
+  logo_path VARCHAR(255) NULL,
+  is_active TINYINT(1) DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE institution_rules (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  institution_id BIGINT UNSIGNED NOT NULL,
+  official_name VARCHAR(190) NULL,
+  font_family VARCHAR(50) DEFAULT 'Times New Roman',
+  font_size DECIMAL(4,2) DEFAULT 12,
+  line_spacing DECIMAL(4,2) DEFAULT 1.5,
+  margin_top DECIMAL(4,2) DEFAULT 3,
+  margin_right DECIMAL(4,2) DEFAULT 3,
+  margin_bottom DECIMAL(4,2) DEFAULT 3,
+  margin_left DECIMAL(4,2) DEFAULT 3,
+  references_style VARCHAR(40) DEFAULT 'ABNT',
+  citation_profile_id BIGINT UNSIGNED NULL,
+  front_page_rules_json JSON NULL,
+  notes TEXT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE courses (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  institution_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(190) NOT NULL,
+  code VARCHAR(40) NULL,
+  is_active TINYINT(1) DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE disciplines (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  institution_id BIGINT UNSIGNED NULL,
+  course_id BIGINT UNSIGNED NULL,
+  name VARCHAR(190) NOT NULL,
+  code VARCHAR(40) NULL,
+  is_active TINYINT(1) DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE academic_levels (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(120) NOT NULL,
+  slug VARCHAR(120) UNIQUE NOT NULL,
+  multiplier DECIMAL(6,2) NOT NULL,
+  description TEXT NULL,
+  is_active TINYINT(1) DEFAULT 1
+);
