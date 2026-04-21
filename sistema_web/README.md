@@ -1,83 +1,127 @@
-# sistema_web (PHP + MySQL)
+# Moz Acad
 
-Estrutura unificada:
-- `public/`: frontend estático + front controller (`index.php`).
-- `app/`: backend PHP (config, bootstrap, schema MySQL).
-- `storage/media/`: ficheiros de media enviados pelo app.
+**Tagline:** Plataforma inteligente de apoio à escrita científica, normalização institucional e geração documental académica.
 
-## Configuração
-Defina variáveis de ambiente:
-- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASS`
-- `JWT_SECRET`
-- `ADMIN_REGISTRATION_SECRET` (opcional)
-- `APP_BASE_URL` (opcional, usado no link de recuperação)
-- Realtime:
-  - `REALTIME_ENABLED` (`1` por omissão)
-  - `REALTIME_STREAM_TTL` (segundos do token SSE; ex.: `45`)
-  - `REALTIME_STREAM_MAX_DURATION` (duração máxima de cada stream SSE; ex.: `20`)
-- Débito / M-Pesa:
-  - `DEBITO_BASE_URL`
-  - `DEBITO_API_TOKEN`
-  - `DEBITO_WALLET_ID`
-  - `DEBITO_CALLBACK_URL`
-- SMTP para recuperação de senha:
-  - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`
-  - `MAIL_FROM`, `MAIL_FROM_NAME`
+## Visão Geral
+Moz Acad é uma base de produção em PHP 8.2+ com arquitectura MVC modular para gestão de pedidos académicos, pricing inteligente, facturação, pagamentos M-Pesa C2B via Débito, pipeline de geração assistida e entrega de DOCX formatado por instituição.
 
-## Executar localmente
-```bash
-php -S 0.0.0.0:3000 -t public
+## Stack
+- PHP 8.2+
+- MySQL/MariaDB
+- Composer
+- GuzzleHTTP
+- PHPWord
+- vlucas/phpdotenv
+- Bootstrap 5
+
+## Arquitectura
+- **Controllers leves**: validação de entrada e delegação.
+- **Services fortes**: pricing, descontos, integração Débito, rule-engine, geração e humanização.
+- **Repositories**: acesso a dados e queries orientadas ao domínio.
+- **DTOs**: transporte tipado entre camadas.
+- **Jobs/Cron**: polling de pagamentos e processamento assíncrono.
+
+## Estrutura de Pastas
+```text
+/public
+/app
+/app/Controllers
+/app/Models
+/app/Repositories
+/app/Services
+/app/Jobs
+/app/Middleware
+/app/Helpers
+/app/DTOs
+/config
+/routes
+/database/migrations
+/database/seeders
+/storage/generated
+/storage/templates
+/storage/logs
 ```
 
-## Realtime interno (compatível com hospedagem compartilhada PHP 7+)
+## Módulos Implementados
+1. Autenticação e sessão segura
+2. Autorização por roles (base para middleware)
+3. Gestão académica (instituições, cursos, disciplinas, níveis)
+4. Catálogo de tipos de trabalho (inclui monografia com revisão humana obrigatória)
+5. Motor de estruturas documentais
+6. Motor de normas institucionais com resolução por camadas
+7. Gestão de pedidos (wizard multi-etapas no backend)
+8. Gestão de anexos
+9. Pricing com breakdown detalhado
+10. Facturação
+11. Pagamentos Débito M-Pesa C2B
+12. Polling principal de status de pagamento
+13. Webhook opcional complementar
+14. Descontos por utilizador seleccionado
+15. Pipeline de geração assistida + humanização pt_MZ
+16. DOCX com PHPWord
+17. Revisões e fila humana
+18. Auditoria e relatórios (schema preparado)
 
-O realtime agora roda dentro do próprio `sistema_web` via PHP + Server-Sent Events (SSE) e tabela `realtime_events`, sem depender de Node.js nem websocket externo.
-
-- `GET /api/realtime/config?deviceId=...` devolve um `streamUrl` curto e autenticado.
-- `GET /api/realtime/stream?...` mantém a stream SSE por um período curto e o browser reconecta automaticamente.
-- Os painéis web continuam com polling como fallback.
-- Não é necessário manter um serviço externo para realtime; toda a implementação suportada fica dentro de `sistema_web`.
-
-## Deploy em host compartilhado
-
-- Faça o deploy da pasta `sistema_web/`.
-- Configure o document root para `sistema_web/public/`.
-- Preserve `public/.htaccess` para o roteamento das rotas amigáveis e da API.
-- Garanta PHP 7+ com extensões comuns de PDO/MySQL e permissão de escrita em `storage/media/`.
-
-## Dependência de email (PHPMailer)
+## Instalação
 ```bash
-composer require phpmailer/phpmailer
+cd sistema_web
+composer install
+cp .env.example .env
 ```
 
-## Compatibilidade
-- As rotas do app Android continuam em `/api/*` sem alteração de contrato principal.
-- A estrutura antiga (`backend/` e `web-frontend/`) foi removida para evitar duplicação; agora toda a aplicação web roda a partir de `public/` com backend em `app/`.
+Crie BD e execute migrations + seeders:
+```bash
+mysql -u root -p moz_acad < database/migrations/001_create_core_tables.sql
+mysql -u root -p moz_acad < database/migrations/002_create_business_tables.sql
+mysql -u root -p moz_acad < database/migrations/003_create_financial_and_ops_tables.sql
+mysql -u root -p moz_acad < database/seeders/001_base_seed.sql
+mysql -u root -p moz_acad < database/seeders/002_pricing_and_structures_seed.sql
+```
 
-## Rotas de autenticação adicionadas
-- `POST /api/auth/forgot-password`
-- `POST /api/auth/reset-password`
-- Páginas web:
-  - `/login.html`
-  - `/register.html`
-  - `/forgot-password.html`
-  - `/reset-password.html`
+## Configuração `.env`
+Use o `.env.example` com todos os parâmetros obrigatórios:
+- App, DB, armazenamento
+- Pricing base e multiplicadores
+- Débito (token estático + login dinâmico)
+- Callback opcional
 
-## Robustez adicionada
-- Endpoint de health check: `GET /api/health`.
-- Validação de acesso por owner/admin para endpoints sensíveis de device, telemetry e media.
-- Operação de processamento de pagamentos com transação no banco.
-- O schema foi consolidado para permitir instalações limpas sem falhar em `ALTER TABLE` duplicados.
-- O realtime foi movido para dentro do próprio backend PHP para funcionar em ambientes com apenas PHP 7+ em hospedagem compartilhada.
+## Débito M-Pesa C2B
+### Endpoints suportados
+- `POST /api/v1/login`
+- `POST /api/v1/wallets/{wallet_id}/c2b/mpesa`
+- `GET /api/v1/transactions/{debito_reference}/status`
 
-## Associação automática do dispositivo
-- A app Android faz associação automática do `deviceId` ao utilizador no login via `POST /api/devices/auto-assign`.
-- O painel web deixa de depender de reivindicação manual do aparelho.
-- A app usa um identificador estável do Android para evitar que o mesmo aparelho seja adicionado várias vezes.
+### Estratégia de autenticação
+- Se `DEBITO_USE_STATIC_TOKEN=true` e `DEBITO_TOKEN` preenchido, usa bearer estático.
+- Caso contrário, faz login dinâmico com `DEBITO_EMAIL` e `DEBITO_PASSWORD`.
 
-## Consentimento remoto persistente para suporte
-- A app Android passa a recolher um consentimento único para `screen` e `ambient_audio` durante a configuração inicial.
-- Depois desse consentimento, a app pode ser ocultada e o painel web passa a iniciar ou parar sessões remotamente enquanto o telemóvel estiver online.
-- `POST /api/devices/:deviceId/support-consent` guarda o consentimento persistente do dispositivo e a respetiva versão de texto.
-- `POST /api/support-sessions/request` só inicia sessões em dispositivos com consentimento registado, online e cria a sessão logo como ativa (`approved`), sem prazo automático de expiração.
-- O controlo das sessões passa a ficar exclusivamente no painel web; a app apenas sincroniza silenciosamente o estado remoto, não mostra notificações persistentes de suporte, não pausa sessões localmente e já não há eventos de auditoria de sessões.
+### Polling como mecanismo principal
+`PaymentStatusPollingService` consulta pagamentos pendentes e actualiza `payments.status` + `orders.status`.
+
+### Webhook opcional
+Endpoint: `POST /webhooks/debito`.
+- Regista payload para auditoria.
+- Complementa o polling.
+- Não substitui a lógica principal.
+
+## Cron Jobs sugeridos
+```bash
+* * * * * /usr/bin/php /path/sistema_web/public/cron_payment_polling.php >> /path/sistema_web/storage/logs/cron.log 2>&1
+```
+
+## Fluxo de Monografia
+- Monografia cadastrada com `allows_full_auto_generation = false` e `requires_human_review = true`.
+- Após geração assistida, pedido entra em `awaiting_human_review`.
+- Só após aprovação humana vai para `ready`.
+
+## Deploy em host PHP tradicional
+1. Aponte document root para `public/` (ou use `public_html` com rewrite).
+2. Suba `vendor/`, `app/`, `config/`, `routes/`, `database/`, `storage/`.
+3. Configure permissões em `storage/`.
+4. Registe cron para polling.
+
+## Observações de Extensão
+- Adicionar middleware RBAC por rota.
+- Completar CRUD admin com controllers dedicados por módulo.
+- Integrar provider de IA real no `OpenAIProvider`.
+- Adicionar fila assíncrona para etapas longas de geração.
